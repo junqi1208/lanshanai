@@ -1,0 +1,81 @@
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--app-content-bg);
+  color: var(--app-text-primary);
+}
+
+:root {
+  --app-content-bg: #ffffff;
+  --app-sider-bg: #f3f4f6;
+  --app-text-primary: #111827;
+  --app-text-secondary: #64748b;
+  --app-border-color: #f0f0f0;
+  --panel-bg: #ffffff;
+  --panel-soft-bg: #f8fbff;
+  --panel-border: #e7ecf3;
+  --panel-hover-border: #cfe0ff;
+  --panel-active-bg: #eff6ff;
+  --panel-active-border: #c7ddff;
+  --modal-shadow: 0 16px 48px rgba(15, 23, 42, 0.16);
+  --login-surface-bg: #ffffff;
+  --login-surface-bg-soft: #fbfbff;
+  --login-left-bg-start: #f7f5ff;
+  --login-left-bg-end: #f2f7ff;
+  --login-tab-text: rgba(15, 23, 42, 0.72);
+  --setting-icon-bg: #eef2ff;
+  --setting-icon-color: #4f46e5;
+  --chat-markdown-text: #1f2937;
+  --chat-markdown-title: #111827;
+  --chat-link-color: #2563eb;
+  --chat-inline-code-bg: rgba(2, 6, 23, 0.06);
+  --chat-quote-border: #d1d5db;
+  --chat-quote-text: #4b5563;
+  --chat-quote-bg: #f9fafb;
+  --chat-code-border: #f0f0f0;
+  --chat-user-bubble-text: #111827;
+}
+
+[data-theme='dark'] {
+  --app-content-bg: #0f172a;
+  --app-sider-bg: #111827;
+  --app-text-primary: #e5e7eb;
+  --app-text-secondary: #94a3b8;
+  --app-border-color: #253047;
+  --panel-bg: #111827;
+  --panel-soft-bg: #0f1b31;
+  --panel-border: #253047;
+  --panel-hover-border: #35517f;
+  --panel-active-bg: #17243d;
+  --panel-active-border: #3a5f93;
+  --modal-shadow: 0 18px 52px rgba(2, 6, 23, 0.58);
+  --login-surface-bg: #0f172a;
+  --login-surface-bg-soft: #111827;
+  --login-left-bg-start: #151b2f;
+  --login-left-bg-end: #0f213f;
+  --login-tab-text: rgba(226, 232, 240, 0.82);
+  --setting-icon-bg: #1e293b;
+  --setting-icon-color: #93c5fd;
+  --chat-markdown-text: #e5e7eb;
+  --chat-markdown-title: #f8fafc;
+  --chat-link-color: #93c5fd;
+  --chat-inline-code-bg: rgba(148, 163, 184, 0.2);
+  --chat-quote-border: #334155;
+  --chat-quote-text: #cbd5e1;
+  --chat-quote-bg: rgba(30, 41, 59, 0.55);
+  --chat-code-border: #334155;
+  --chat-user-bubble-text: #f8fafc;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+}
+div,p,h1,h2,h3,h4,h5,h6 {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}

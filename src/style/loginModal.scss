@@ -1,0 +1,353 @@
+.login-modal {
+  .ant-modal-container {
+    border-radius: 20px;
+    overflow: hidden;
+    padding: 0;
+    box-shadow:
+      0 28px 70px rgba(15, 23, 42, 0.18),
+      0 10px 22px rgba(15, 23, 42, 0.12);
+  }
+  .ant-modal-close {
+    inset-inline-end: 14px;
+    inset-block-start: 14px;
+  }
+  .ant-modal-body {
+    padding: 0;
+    background: linear-gradient(180deg, var(--login-surface-bg) 0%, var(--login-surface-bg-soft) 100%);
+  }
+}
+
+.login-modal-body {
+  --login-accent: #1677ff;
+  --login-accent-rgb: 22, 119, 255;
+  display: flex;
+  gap: 0;
+  height: 100%;
+  align-items: stretch;
+}
+
+.login-modal-left {
+  flex: 1;
+  height: 100%;
+  background: linear-gradient(180deg, var(--login-left-bg-start) 0%, var(--login-left-bg-end) 100%);
+  border-right: 1px solid rgba(var(--login-accent-rgb), 0.22);
+  position: relative;
+  overflow: hidden;
+}
+
+.login-modal-left::before {
+  content: '';
+  position: absolute;
+  inset: -80px;
+  background:
+    radial-gradient(
+      circle at 30% 30%,
+      rgba(255, 201, 60, 0.18) 0 14px,
+      transparent 15px
+    ),
+    radial-gradient(
+      circle at 60% 65%,
+      rgba(123, 92, 255, 0.14) 0 12px,
+      transparent 13px
+    ),
+    radial-gradient(
+      circle at 75% 25%,
+      rgba(34, 34, 34, 0.08) 0 10px,
+      transparent 11px
+    );
+  filter: blur(0.2px);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.login-modal-carousel {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+}
+
+.login-modal-carousel .slick-list,
+.login-modal-carousel .slick-track,
+.login-modal-carousel .slick-slide,
+.login-modal-carousel .slick-slide > div {
+  height: 100%;
+}
+
+.login-modal-carousel-item {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.login-modal-carousel-item::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(15, 23, 42, 0.04) 0%,
+    rgba(15, 23, 42, 0.26) 100%
+  );
+}
+
+.login-modal-carousel-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transform: scale(1.03);
+  transition: transform 3s ease;
+}
+
+.login-modal-carousel .slick-active .login-modal-carousel-item img {
+  transform: scale(1.08);
+}
+
+.login-modal-carousel-info {
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  bottom: 28px;
+  z-index: 2;
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(15, 23, 42, 0.28);
+}
+
+.login-modal-carousel-info h4 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.login-modal-carousel-info p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.92;
+  max-width: 320px;
+}
+
+.login-modal-carousel .slick-dots {
+  bottom: 14px;
+  z-index: 3;
+}
+
+.login-modal-carousel .slick-dots li {
+  width: 18px;
+}
+
+.login-modal-carousel .slick-dots li button {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.login-modal-carousel .slick-dots li.slick-active button {
+  background: #fff;
+}
+
+.login-modal-right {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  background: linear-gradient(180deg, var(--login-surface-bg) 0%, var(--login-surface-bg-soft) 100%);
+  padding: 20px;
+}
+
+.login-panel {
+  width: 100%;
+  max-width: 390px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.login-panel-main {
+  flex: 1;
+}
+
+.login-panel-top {
+  margin-bottom: 16px;
+}
+
+.login-modal-right .ant-form {
+  width: 100%;
+  margin: 0 auto;
+}
+
+.login-header-logo {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.login-header-logo img {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  box-shadow: 0 8px 20px rgba(var(--login-accent-rgb), 0.2);
+}
+
+.login-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.login-brand-text span {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+}
+
+.login-brand-text .ant-typography {
+  font-size: 12px;
+}
+
+.login-mode-tabs {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-radius: 12px;
+  padding: 4px;
+  background: rgba(var(--login-accent-rgb), 0.09);
+}
+
+.login-mode-tabs button {
+  border: 0;
+  background: transparent;
+  border-radius: 9px;
+  height: 34px;
+  font-size: 13px;
+  color: var(--login-tab-text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.login-mode-tabs button.active {
+  background: var(--panel-bg);
+  color: var(--login-accent);
+  font-weight: 600;
+  box-shadow: 0 8px 16px rgba(var(--login-accent-rgb), 0.2);
+}
+
+.login-modal-right .ant-form-item {
+  margin-bottom: 12px;
+}
+
+.login-modal-right .ant-input:hover,
+.login-modal-right .ant-input-affix-wrapper:hover {
+  border-color: rgba(var(--login-accent-rgb), 0.48);
+}
+
+.login-modal-right .ant-input:focus,
+.login-modal-right .ant-input-focused,
+.login-modal-right .ant-input-affix-wrapper-focused {
+  border-color: var(--login-accent);
+  box-shadow: 0 0 0 2px rgba(var(--login-accent-rgb), 0.14);
+}
+
+.login-modal-right .ant-btn-primary {
+  border-radius: 12px;
+  height: 42px;
+  font-weight: 600;
+  border-color: var(--login-accent);
+  background: var(--login-accent);
+  box-shadow: 0 10px 20px rgba(var(--login-accent-rgb), 0.28);
+}
+
+.login-modal-right .ant-btn-primary:not(:disabled):hover {
+  border-color: var(--login-accent);
+  background: var(--login-accent);
+  filter: brightness(1.05);
+}
+
+.login-modal-right .ant-btn-link {
+  color: var(--login-accent);
+}
+
+.login-modal-right .ant-btn-link:hover {
+  color: var(--login-accent);
+  opacity: 0.88;
+}
+
+.login-form-actions {
+  margin: -2px 0 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.login-form-actions .ant-typography {
+  font-size: 12px;
+}
+
+.login-forgot-btn {
+  padding-inline: 4px;
+  height: auto;
+  line-height: 1.2;
+}
+
+.login-panel-bottom {
+  margin-top: auto;
+  padding-top: 8px;
+  text-align: center;
+  min-height: 44px;
+}
+
+.login-panel-bottom .ant-typography {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.login-mountain-quote {
+  animation: quote-fade-in 0.35s ease;
+}
+
+.login-mountain-quote .ant-typography:first-child {
+  display: block;
+}
+
+.login-mountain-quote .ant-typography:last-child {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.8;
+}
+
+@keyframes quote-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 860px) {
+  .login-modal {
+    .ant-modal-body {
+      height: auto !important;
+      min-height: 420px;
+    }
+  }
+
+  .login-modal-left {
+    display: none;
+  }
+
+  .login-modal-right {
+    flex: 1 1 100%;
+    padding: 18px;
+  }
+
+  .login-panel {
+    max-width: 100%;
+    padding: 16px;
+  }
+}
