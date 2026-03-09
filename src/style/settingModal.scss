@@ -22,7 +22,7 @@
 .setting-modal-title {
   font-size: 16px;
   font-weight: 600;
-  color: #111827;
+  color: var(--app-text-primary);
 }
 
 .setting-modal-body {
@@ -118,8 +118,8 @@
 }
 
 .setting-modal-nav button.active .setting-modal-nav-icon {
-  background: #dbeafe;
-  color: #1d4ed8;
+  background: color-mix(in srgb, #1677ff 22%, transparent);
+  color: var(--app-icon-color);
 }
 
 .setting-modal-panel {

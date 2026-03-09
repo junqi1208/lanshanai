@@ -3,8 +3,9 @@
   padding: 12px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: flex-start;
+  min-height: 0;
   color: var(--app-text-primary);
 }
 .chat-side-header {
@@ -39,14 +40,47 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  .chat-side-add-button {
+  .chat-side-add-actions {
     width: 100%;
     height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .chat-side-add-button {
+    flex: 1;
+    height: 100%;
+  }
+  .chat-side-search-button {
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--app-icon-muted);
+  }
+  .chat-side-search-button:hover,
+  .chat-side-search-button:focus-visible {
+    color: var(--app-icon-color) !important;
   }
 }
 .chat-side-list {
   width: 100%;
   flex: 1;
+  margin: 20px 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+
+  .chat-side-list-loading {
+    min-height: 28px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: var(--app-text-secondary);
+    font-size: 12px;
+    margin-top: 8px;
+  }
 }
 
 .chat-side .ant-conversations-item,
@@ -64,7 +98,7 @@
 .chat-side-footer {
   width: 100%;
   height: 40px;
-  margin-top: 12px;
+  margin-top: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -84,5 +118,10 @@
   }
   .anticon {
     cursor: pointer;
+    color: var(--app-icon-muted);
+  }
+  .ant-btn:hover .anticon,
+  .ant-btn:focus-visible .anticon {
+    color: var(--app-icon-color);
   }
 }

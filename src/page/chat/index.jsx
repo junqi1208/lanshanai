@@ -1,9 +1,9 @@
-import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, notification } from 'antd'
+import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, notification, Checkbox, Button, Modal, Switch, Drawer, Grid } from 'antd'
 import { Actions, Bubble, CodeHighlighter, Sender } from '@ant-design/x'
 import XMarkdown from '@ant-design/x-markdown'
-import { RedoOutlined } from '@ant-design/icons'
+import { RedoOutlined, CopyOutlined } from '@ant-design/icons'
 import ChatSide from './side'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 const { Content, Sider } = Layout
 import SvgIcon from '../../components/svgIcon'
 import LoginModal from '../../components/loginModal'
@@ -13,8 +13,10 @@ import '@/style/chat.scss'
 import { clearToken, getToken, setToken } from '@/api/token'
 import { login, me, register, updateMe } from '@/api/auth'
 import { askStream, summarizeConversationTitle } from '@/api/ai'
+import { createShareLink } from '@/api/share'
 import BotAvatar from '@/assets/images/bot.png'
 import {
+  addMessage,
   createConversation,
   deleteConversation,
   listConversations,
@@ -23,20 +25,62 @@ import {
 } from '@/api/conversations'
 
 
+const CONVERSATION_PAGE_SIZE = 20
+
+const sortConversations = (list = []) =>
+  [...list].sort((a, b) => {
+    const pinDiff = Number(Boolean(b?.isPinned)) - Number(Boolean(a?.isPinned))
+    if (pinDiff !== 0) return pinDiff
+    const aTime = new Date(a?.updatedAt || a?.createdAt || 0).getTime()
+    const bTime = new Date(b?.updatedAt || b?.createdAt || 0).getTime()
+    return bTime - aTime
+  })
+
+const mergeConversations = (base = [], incoming = []) => {
+  const map = new Map()
+  base.forEach((item) => {
+    map.set(item.id, item)
+  })
+  incoming.forEach((item) => {
+    map.set(item.id, { ...(map.get(item.id) || {}), ...item })
+  })
+  return sortConversations(Array.from(map.values()))
+}
+
+const MarkdownBubbleContent = memo(function MarkdownBubbleContent({ content, renderContent }) {
+  return <Typography>{renderContent(content)}</Typography>
+})
+
 function ChatPage() {
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const listRef = useRef(null)
   const streamAbortRef = useRef(null)
+  const streamTextBufferRef = useRef('')
+  const streamReasoningBufferRef = useRef('')
+  const streamFlushTimerRef = useRef(null)
+  const activeStreamMetaRef = useRef({ conversationId: '', localAiId: '', paused: false })
   const [collapsed, setCollapsed] = useState(false)
+  const [mobileSideOpen, setMobileSideOpen] = useState(false)
   const [value, setValue] = useState('')
   const [loading, setLoading] = useState(false)
+  const [deepThinking, setDeepThinking] = useState(false)
+  const [reasoningExpandedMap, setReasoningExpandedMap] = useState({})
   const [loginOpen, setLoginOpen] = useState(() => !getToken())
   const [settingOpen, setSettingOpen] = useState(false)
   const { themeMode, resolvedTheme, applyThemeMode } = useThemeMode()
   const [currentUser, setCurrentUser] = useState(null)
 
   const [conversations, setConversations] = useState([])
+  const [conversationPage, setConversationPage] = useState(1)
+  const [conversationHasMore, setConversationHasMore] = useState(false)
+  const [conversationLoadingMore, setConversationLoadingMore] = useState(false)
   const [activeConversationId, setActiveConversationId] = useState('')
   const [chatList, setChatList] = useState([])
+  const [shareMode, setShareMode] = useState(false)
+  const [selectedShareGroupIds, setSelectedShareGroupIds] = useState([])
+  const [shareModalOpen, setShareModalOpen] = useState(false)
+  const [shareCreating, setShareCreating] = useState(false)
 
   const renderMarkdownWithCodeHighlighter = useCallback((content) => {
     const source = String(content || '')
@@ -90,6 +134,12 @@ function ChatPage() {
     />
   )
 
+  useEffect(() => {
+    if (!isMobile) {
+      setMobileSideOpen(false)
+    }
+  }, [isMobile])
+
   const activeTitle = useMemo(() => {
     const found = conversations.find((c) => c.id === activeConversationId)
     return found?.title || '新对话'
@@ -117,17 +167,18 @@ function ChatPage() {
       return formatDate(target)
     }
 
-    return conversations.map((c) => ({
+    return sortConversations(conversations).map((c) => ({
       key: c.id,
       label: c.title || '未命名会话',
-      group: getGroupLabel(c.updatedAt),
+      isPinned: !!c.isPinned,
+      group: c.isPinned ? '置顶' : getGroupLabel(c.updatedAt),
     }))
   }, [conversations])
 
   const ensureConversation = useCallback(async () => {
     if (activeConversationId) return activeConversationId
     const conv = await createConversation({})
-    setConversations((prev) => [conv, ...prev])
+    setConversations((prev) => sortConversations([conv, ...prev]))
     setActiveConversationId(conv.id)
     return conv.id
   }, [activeConversationId])
@@ -143,12 +194,39 @@ function ChatPage() {
         key: item.id || `msg_${index}`,
         role: item.type === 'user' ? 'user' : 'ai',
         content: item.message,
+        reasoning: item.reasoning || '',
         loading: !!item.loading,
         typing: item.streaming ? { effect: 'fade-in', step: 3 } : false,
         retryPrompt: isAi ? latestUserPrompt : '',
       }
     })
   }, [chatList])
+
+  const shareRows = useMemo(() => {
+    let currentGroupId = ''
+    return chatList.map((item, index) => {
+      const rowId = item.id || `msg_${index}`
+      if (item.type === 'user') {
+        currentGroupId = `u_${rowId}`
+      } else if (!currentGroupId) {
+        currentGroupId = `m_${rowId}`
+      }
+      return {
+        id: rowId,
+        groupId: currentGroupId,
+        role: item.type === 'user' ? 'user' : 'assistant',
+        content: item.message,
+      }
+    })
+  }, [chatList])
+
+  const shareGroupIds = useMemo(() => {
+    const set = new Set()
+    shareRows.forEach((row) => set.add(row.groupId))
+    return Array.from(set)
+  }, [shareRows])
+
+  const selectedShareCount = selectedShareGroupIds.length
 
   const antdThemeConfig = useMemo(
     () => ({
@@ -172,14 +250,82 @@ function ChatPage() {
     })
   }, [])
 
+  const clearStreamFlushTimer = useCallback(() => {
+    if (!streamFlushTimerRef.current) return
+    clearTimeout(streamFlushTimerRef.current)
+    streamFlushTimerRef.current = null
+  }, [])
+
+  const applyStreamBuffersToMessage = useCallback((localAiId, options = {}) => {
+    const { finish = false } = options
+    const nextText = streamTextBufferRef.current
+    const nextReasoning = streamReasoningBufferRef.current
+    setChatList((prev) => {
+      const targetIdx = prev.findIndex((msg) => msg.id === localAiId)
+      if (targetIdx < 0) return prev
+      const next = [...prev]
+      next[targetIdx] = {
+        ...next[targetIdx],
+        message: nextText,
+        reasoning: nextReasoning,
+        streaming: !finish,
+        loading: false,
+      }
+      return next
+    })
+  }, [])
+
+  const scheduleStreamFlush = useCallback((localAiId) => {
+    if (streamFlushTimerRef.current) return
+    streamFlushTimerRef.current = setTimeout(() => {
+      streamFlushTimerRef.current = null
+      applyStreamBuffersToMessage(localAiId, { finish: false })
+    }, 80)
+  }, [applyStreamBuffersToMessage])
+
   const refreshMeAndConvs = async () => {
-    const [u, convs] = await Promise.all([me(), listConversations()])
+    const [u, convRes] = await Promise.all([
+      me(),
+      listConversations({ page: 1, pageSize: CONVERSATION_PAGE_SIZE }),
+    ])
+    const sortedConvs = sortConversations(convRes?.items || [])
     setCurrentUser(u)
-    setConversations(convs)
-    if (!activeConversationId && convs?.[0]?.id) {
-      setActiveConversationId(convs[0].id)
+    setConversations(sortedConvs)
+    setConversationPage(1)
+    setConversationHasMore(Boolean(convRes?.hasMore))
+    if (!activeConversationId && sortedConvs?.[0]?.id) {
+      setActiveConversationId(sortedConvs[0].id)
     }
   }
+
+  const loadMoreConversations = useCallback(async () => {
+    if (conversationLoadingMore || !conversationHasMore) return
+    const nextPage = conversationPage + 1
+    setConversationLoadingMore(true)
+    try {
+      const convRes = await listConversations({
+        page: nextPage,
+        pageSize: CONVERSATION_PAGE_SIZE,
+      })
+      const nextItems = convRes?.items || []
+      setConversations((prev) => mergeConversations(prev, nextItems))
+      setConversationPage(nextPage)
+      setConversationHasMore(Boolean(convRes?.hasMore))
+    } finally {
+      setConversationLoadingMore(false)
+    }
+  }, [conversationHasMore, conversationLoadingMore, conversationPage])
+
+  const handleSideListScroll = useCallback((event) => {
+    const target = event?.currentTarget
+    if (!target || conversationLoadingMore || !conversationHasMore) return
+    const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight
+    if (distanceToBottom <= 40) {
+      loadMoreConversations().catch((e) => {
+        message.error(e?.response?.data?.message || '加载更多会话失败')
+      })
+    }
+  }, [conversationHasMore, conversationLoadingMore, loadMoreConversations])
 
   const loadConversationMessages = useCallback(async (conversationId) => {
     if (streamAbortRef.current) {
@@ -193,6 +339,7 @@ function ChatPage() {
         id: m.id,
         type: m.role === 'user' ? 'user' : 'bot',
         message: m.content,
+        reasoning: m.reasoning || '',
         streaming: false,
       })),
     )
@@ -218,6 +365,24 @@ function ChatPage() {
     [conversations],
   )
 
+  const pauseCurrentStreamingAnswer = useCallback(async () => {
+    const { conversationId, localAiId, paused } = activeStreamMetaRef.current
+    if (!conversationId || !localAiId || paused) return
+    activeStreamMetaRef.current = { conversationId, localAiId, paused: true }
+    clearStreamFlushTimer()
+    applyStreamBuffersToMessage(localAiId, { finish: true })
+    const partialAnswer = String(streamTextBufferRef.current || '').trim()
+    const partialReasoning = String(streamReasoningBufferRef.current || '').trim()
+    if (partialAnswer) {
+      await addMessage(conversationId, {
+        role: 'assistant',
+        content: partialAnswer,
+        reasoning: partialReasoning || undefined,
+      })
+    }
+    await maybeGenerateConversationTitle(conversationId)
+  }, [applyStreamBuffersToMessage, clearStreamFlushTimer, maybeGenerateConversationTitle])
+
   const submitQuestion = useCallback(
     async (rawPrompt, options = {}) => {
       const { clearInput = false } = options
@@ -238,7 +403,7 @@ function ChatPage() {
       setChatList((prev) => [
         ...prev,
         localUserMsg,
-        { id: localAiId, type: 'bot', message: '', streaming: true, loading: true },
+        { id: localAiId, type: 'bot', message: '', reasoning: '', streaming: true, loading: true },
       ])
       if (clearInput) setValue('')
       scrollToBottom()
@@ -247,10 +412,12 @@ function ChatPage() {
         const cid = await ensureConversation()
         const abortController = new AbortController()
         streamAbortRef.current = abortController
-        let generated = ''
+        streamTextBufferRef.current = ''
+        streamReasoningBufferRef.current = ''
+        activeStreamMetaRef.current = { conversationId: cid, localAiId, paused: false }
 
         await askStream(
-          { conversationId: cid, prompt: trimmed },
+          { conversationId: cid, prompt: trimmed, deepThinking },
           {
             signal: abortController.signal,
             onStart: (payload) => {
@@ -262,32 +429,30 @@ function ChatPage() {
               }
             },
             onDelta: (delta) => {
-              generated += delta
-              setChatList((prev) =>
-                prev.map((msg) =>
-                  msg.id === localAiId
-                    ? { ...msg, message: generated, streaming: true, loading: false }
-                    : msg,
-                ),
-              )
+              streamTextBufferRef.current += delta
+              scheduleStreamFlush(localAiId)
+            },
+            onReasoning: (delta) => {
+              streamReasoningBufferRef.current += delta
+              scheduleStreamFlush(localAiId)
             },
             onDone: () => {
-              setChatList((prev) =>
-                prev.map((msg) =>
-                  msg.id === localAiId ? { ...msg, streaming: false, loading: false } : msg,
-                ),
-              )
+              clearStreamFlushTimer()
+              applyStreamBuffersToMessage(localAiId, { finish: true })
               maybeGenerateConversationTitle(cid)
             },
             onError: (errMsg) => {
+              clearStreamFlushTimer()
               throw new Error(errMsg || '流式请求失败')
             },
           },
         )
 
         if (!conversations.find((c) => c.id === cid)) {
-          const convs = await listConversations()
-          setConversations(convs)
+          const convRes = await listConversations({ page: 1, pageSize: CONVERSATION_PAGE_SIZE })
+          setConversations(sortConversations(convRes?.items || []))
+          setConversationPage(1)
+          setConversationHasMore(Boolean(convRes?.hasMore))
         }
       } catch (e) {
         const errMsg = e?.name === 'AbortError' ? '已取消发送' : e?.message || e?.response?.data?.message || '发送失败'
@@ -302,11 +467,26 @@ function ChatPage() {
           message.error(errMsg)
         }
       } finally {
+        clearStreamFlushTimer()
         streamAbortRef.current = null
+        streamTextBufferRef.current = ''
+        streamReasoningBufferRef.current = ''
+        activeStreamMetaRef.current = { conversationId: '', localAiId: '', paused: false }
         setLoading(false)
       }
     },
-    [activeConversationId, conversations, ensureConversation, loading, maybeGenerateConversationTitle, scrollToBottom],
+    [
+      activeConversationId,
+      applyStreamBuffersToMessage,
+      clearStreamFlushTimer,
+      deepThinking,
+      conversations,
+      ensureConversation,
+      loading,
+      maybeGenerateConversationTitle,
+      scheduleStreamFlush,
+      scrollToBottom,
+    ],
   )
 
   const handleRetryQuestion = useCallback(async (retryPrompt) => {
@@ -319,13 +499,11 @@ function ChatPage() {
   }, [submitQuestion])
 
   const actionItems = useCallback(
-    (content) => [
+    () => [
       {
-        key: 'copy',
+        key: 'copyText',
+        icon: <CopyOutlined />,
         label: '复制',
-        actionRender: () => {
-          return <Actions.Copy text={content} />
-        },
       },
       {
         key: 'retry',
@@ -336,24 +514,116 @@ function ChatPage() {
     [],
   )
 
+  const toggleShareGroup = useCallback((groupId, checked) => {
+    if (!groupId) return
+    setSelectedShareGroupIds((prev) => {
+      const has = prev.includes(groupId)
+      if (checked && !has) return [...prev, groupId]
+      if (!checked && has) return prev.filter((id) => id !== groupId)
+      return prev
+    })
+  }, [])
+
+  const toggleReasoningExpanded = useCallback((messageKey) => {
+    if (!messageKey) return
+    setReasoningExpandedMap((prev) => ({
+      ...prev,
+      [messageKey]: !(prev[messageKey] ?? true),
+    }))
+  }, [])
+
+  const handleSelectAllShare = useCallback(() => {
+    if (!shareGroupIds.length) return
+    if (selectedShareGroupIds.length === shareGroupIds.length) {
+      setSelectedShareGroupIds([])
+      return
+    }
+    setSelectedShareGroupIds(shareGroupIds)
+  }, [selectedShareGroupIds.length, shareGroupIds])
+
+  const exitShareMode = useCallback(() => {
+    setShareMode(false)
+    setSelectedShareGroupIds([])
+    setShareModalOpen(false)
+  }, [])
+
+  const copyShareLink = useCallback(async () => {
+    if (!activeConversationId) {
+      message.warning('当前会话不可分享')
+      return
+    }
+    if (!selectedShareGroupIds.length) {
+      message.warning('请至少选择一组对话')
+      return
+    }
+    setShareCreating(true)
+    try {
+      const res = await createShareLink({
+        conversationId: activeConversationId,
+        groupIds: selectedShareGroupIds,
+      })
+      const shareLink = `${window.location.origin}${res?.sharePath || ''}`
+      await navigator.clipboard.writeText(shareLink)
+      message.success('分享链接已复制')
+      setShareModalOpen(false)
+    } catch {
+      message.error('创建或复制分享链接失败')
+    } finally {
+      setShareCreating(false)
+    }
+  }, [activeConversationId, selectedShareGroupIds])
+
   const bubbleRoles = useMemo(
     () => ({
       ai: (data) => ({
         placement: 'start',
         avatar: () => <Avatar className="chat-main-avatar" src={BotAvatar} />,
         typing: data.typing || false,
-        contentRender: (content) => <Typography>{renderMarkdownWithCodeHighlighter(content)}</Typography>,
-        footer: (content) => (
+        contentRender: (content) => {
+          const hasReasoning = !!String(data.reasoning || '').trim()
+          const msgKey = String(data?.key || '')
+          const expanded = reasoningExpandedMap[msgKey] ?? true
+          return (
+            <div className="chat-ai-content-wrap">
+              {hasReasoning ? (
+                <div className="chat-ai-reasoning">
+                  <div className="chat-ai-reasoning-head">
+                    <div className="chat-ai-reasoning-title">深度思考</div>
+                    <Button
+                      type="link"
+                      size="small"
+                      className="chat-ai-reasoning-toggle"
+                      onClick={() => toggleReasoningExpanded(msgKey)}
+                    >
+                      {expanded ? '收起' : '展开'}
+                    </Button>
+                  </div>
+                  {expanded ? <div className="chat-ai-reasoning-body">{data.reasoning}</div> : null}
+                </div>
+              ) : null}
+              <MarkdownBubbleContent content={content} renderContent={renderMarkdownWithCodeHighlighter} />
+            </div>
+          )
+        },
+        footer: (content) => (shareMode ? null : (
           <Actions
-            items={actionItems(content)}
-            onClick={(payload) => {
+            items={actionItems()}
+            onClick={async (payload) => {
               const actionKey = typeof payload === 'string' ? payload : payload?.key
+              if (actionKey === 'copyText') {
+                try {
+                  await navigator.clipboard.writeText(String(content || ''))
+                  message.success('已复制')
+                } catch {
+                  message.error('复制失败')
+                }
+              }
               if (actionKey === 'retry') {
                 handleRetryQuestion(data.retryPrompt)
               }
             }}
           />
-        ),
+        )),
       }),
       user: {
         placement: 'end',
@@ -361,13 +631,16 @@ function ChatPage() {
         typing: false,
       },
     }),
-    [actionItems, handleRetryQuestion, renderMarkdownWithCodeHighlighter],
+    [actionItems, handleRetryQuestion, reasoningExpandedMap, renderMarkdownWithCodeHighlighter, shareMode, toggleReasoningExpanded],
   )
 
   useEffect(() => {
     const handler = () => {
       setCurrentUser(null)
       setConversations([])
+      setConversationPage(1)
+      setConversationHasMore(false)
+      setConversationLoadingMore(false)
       setActiveConversationId('')
       setChatList([])
       setLoginOpen(true)
@@ -387,6 +660,10 @@ function ChatPage() {
 
   useEffect(() => {
     if (!activeConversationId) return
+    setShareMode(false)
+    setSelectedShareGroupIds([])
+    setShareModalOpen(false)
+    setReasoningExpandedMap({})
     loadConversationMessages(activeConversationId).catch((e) => {
       message.error(e?.response?.data?.message || '加载会话失败')
     })
@@ -397,124 +674,340 @@ function ChatPage() {
     scrollToBottom()
   }, [chatList.length, scrollToBottom])
 
+  useEffect(() => {
+    return () => {
+      if (streamAbortRef.current) {
+        streamAbortRef.current.abort()
+        streamAbortRef.current = null
+      }
+      clearStreamFlushTimer()
+    }
+  }, [clearStreamFlushTimer])
+
   return (
     <ConfigProvider theme={antdThemeConfig}>
       <Layout style={{ height: '100%' }}>
-      <Sider
-        width={280}
-        style={{ height: '100%', backgroundColor: 'var(--app-sider-bg)' }}
-        collapsible
-        trigger={triggerEle}
-        collapsed={collapsed}
-        collapsedWidth={0}
-        onCollapse={() => {
-          setCollapsed(!collapsed)
-        }}
-      >
-        <ChatSide
-          collapsed={collapsed}
-          items={sideItems}
-          selectedKey={activeConversationId}
-          onSelect={async (id) => {
-            setActiveConversationId(id)
+      {isMobile ? (
+        <Drawer
+          open={mobileSideOpen}
+          placement="left"
+          onClose={() => setMobileSideOpen(false)}
+          title={null}
+          closable={false}
+          width="82vw"
+          styles={{
+            header: {
+              display: 'none',
+            },
+            body: {
+              padding: 0,
+              backgroundColor: 'var(--app-sider-bg)',
+            },
+            content: {
+              backgroundColor: 'var(--app-sider-bg)',
+            },
           }}
-          onCreateNew={async () => {
-            try {
-              const conv = await createConversation({})
-              setConversations((prev) => [conv, ...prev])
-              setActiveConversationId(conv.id)
-            } catch (e) {
-              message.error(e?.response?.data?.message || '新建对话失败')
-            }
-          }}
-          onRename={async (id, title) => {
-            try {
-              const updated = await updateConversation(id, { title })
-              setConversations((prev) =>
-                prev.map((c) => (c.id === id ? { ...c, ...updated } : c)),
-              )
-              message.success('重命名成功')
-            } catch (e) {
-              message.error(e?.response?.data?.message || '重命名失败')
-            }
-          }}
-          onDelete={async (id) => {
-            try {
-              await deleteConversation(id)
-              setConversations((prev) => {
-                const next = prev.filter((c) => c.id !== id)
-                if (activeConversationId === id) {
-                  const nextActiveId = next[0]?.id || ''
-                  setActiveConversationId(nextActiveId)
-                  if (!nextActiveId) {
-                    setChatList([])
+        >
+          <ChatSide
+            collapsed={false}
+            items={sideItems}
+            hasMore={conversationHasMore}
+            loadingMore={conversationLoadingMore}
+            onListScroll={handleSideListScroll}
+            selectedKey={activeConversationId}
+            onSelect={async (id) => {
+              setActiveConversationId(id)
+              setMobileSideOpen(false)
+            }}
+            onCreateNew={async () => {
+              try {
+                const conv = await createConversation({})
+                setConversations((prev) => sortConversations([conv, ...prev]))
+                setActiveConversationId(conv.id)
+                setMobileSideOpen(false)
+              } catch (e) {
+                message.error(e?.response?.data?.message || '新建对话失败')
+              }
+            }}
+            onRename={async (id, title) => {
+              try {
+                const updated = await updateConversation(id, { title })
+                setConversations((prev) =>
+                  sortConversations(prev.map((c) => (c.id === id ? { ...c, ...updated } : c))),
+                )
+                message.success('重命名成功')
+              } catch (e) {
+                message.error(e?.response?.data?.message || '重命名失败')
+              }
+            }}
+            onTogglePin={async (id, isPinned) => {
+              try {
+                const updated = await updateConversation(id, { isPinned })
+                setConversations((prev) =>
+                  sortConversations(prev.map((c) => (c.id === id ? { ...c, ...updated } : c))),
+                )
+                message.success(isPinned ? '置顶成功' : '已取消置顶')
+              } catch (e) {
+                message.error(e?.response?.data?.message || '置顶操作失败')
+              }
+            }}
+            onDelete={async (id) => {
+              try {
+                await deleteConversation(id)
+                setConversations((prev) => {
+                  const next = prev.filter((c) => c.id !== id)
+                  if (activeConversationId === id) {
+                    const nextActiveId = next[0]?.id || ''
+                    setActiveConversationId(nextActiveId)
+                    if (!nextActiveId) {
+                      setChatList([])
+                    }
                   }
-                }
-                return next
-              })
-              message.success('删除成功')
-            } catch (e) {
-              message.error(e?.response?.data?.message || '删除失败')
-            }
+                  return next
+                })
+                message.success('删除成功')
+              } catch (e) {
+                message.error(e?.response?.data?.message || '删除失败')
+              }
+            }}
+            footerUser={{
+              username: currentUser?.nickname || currentUser?.username || '未登录',
+              avatar: currentUser?.avatar,
+            }}
+            onLogout={async () => {
+              clearToken()
+              window.dispatchEvent(new CustomEvent('auth:logout'))
+              message.success('已退出登录')
+            }}
+            onOpenSettings={() => setSettingOpen(true)}
+          />
+        </Drawer>
+      ) : (
+        <Sider
+          width={280}
+          style={{ height: '100%', backgroundColor: 'var(--app-sider-bg)' }}
+          collapsible
+          trigger={triggerEle}
+          collapsed={collapsed}
+          collapsedWidth={0}
+          onCollapse={() => {
+            setCollapsed(!collapsed)
           }}
-          footerUser={{
-            username: currentUser?.nickname || currentUser?.username || '未登录',
-            avatar: currentUser?.avatar,
-          }}
-          onLogout={async () => {
-            clearToken()
-            window.dispatchEvent(new CustomEvent('auth:logout'))
-            message.success('已退出登录')
-          }}
-          onOpenSettings={() => setSettingOpen(true)}
-        />
-      </Sider>
+        >
+          <ChatSide
+            collapsed={collapsed}
+            items={sideItems}
+            hasMore={conversationHasMore}
+            loadingMore={conversationLoadingMore}
+            onListScroll={handleSideListScroll}
+            selectedKey={activeConversationId}
+            onSelect={async (id) => {
+              setActiveConversationId(id)
+            }}
+            onCreateNew={async () => {
+              try {
+                const conv = await createConversation({})
+                setConversations((prev) => sortConversations([conv, ...prev]))
+                setActiveConversationId(conv.id)
+              } catch (e) {
+                message.error(e?.response?.data?.message || '新建对话失败')
+              }
+            }}
+            onRename={async (id, title) => {
+              try {
+                const updated = await updateConversation(id, { title })
+                setConversations((prev) =>
+                  sortConversations(prev.map((c) => (c.id === id ? { ...c, ...updated } : c))),
+                )
+                message.success('重命名成功')
+              } catch (e) {
+                message.error(e?.response?.data?.message || '重命名失败')
+              }
+            }}
+            onTogglePin={async (id, isPinned) => {
+              try {
+                const updated = await updateConversation(id, { isPinned })
+                setConversations((prev) =>
+                  sortConversations(prev.map((c) => (c.id === id ? { ...c, ...updated } : c))),
+                )
+                message.success(isPinned ? '置顶成功' : '已取消置顶')
+              } catch (e) {
+                message.error(e?.response?.data?.message || '置顶操作失败')
+              }
+            }}
+            onDelete={async (id) => {
+              try {
+                await deleteConversation(id)
+                setConversations((prev) => {
+                  const next = prev.filter((c) => c.id !== id)
+                  if (activeConversationId === id) {
+                    const nextActiveId = next[0]?.id || ''
+                    setActiveConversationId(nextActiveId)
+                    if (!nextActiveId) {
+                      setChatList([])
+                    }
+                  }
+                  return next
+                })
+                message.success('删除成功')
+              } catch (e) {
+                message.error(e?.response?.data?.message || '删除失败')
+              }
+            }}
+            footerUser={{
+              username: currentUser?.nickname || currentUser?.username || '未登录',
+              avatar: currentUser?.avatar,
+            }}
+            onLogout={async () => {
+              clearToken()
+              window.dispatchEvent(new CustomEvent('auth:logout'))
+              message.success('已退出登录')
+            }}
+            onOpenSettings={() => setSettingOpen(true)}
+          />
+        </Sider>
+      )}
       <Content style={{ backgroundColor: 'var(--app-content-bg)', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
         <div className='chat-main'>
           <div className='chat-main-header'>
+            {isMobile ? (
+              <Button
+                className='chat-main-menu-btn'
+                type="text"
+                icon={<SvgIcon name={'collapse'} size={18} />}
+                onClick={() => setMobileSideOpen(true)}
+              />
+            ) : null}
             <div className='chat-main-title'>{activeTitle}</div>
             <div className='chat-main-share'>
-              <SvgIcon name={'share'} size={18}></SvgIcon>
+              <Button
+                type="text"
+                icon={<SvgIcon name={'share'} size={18}></SvgIcon>}
+                onClick={() => {
+                  if (!chatList.length) {
+                    message.warning('当前会话暂无可分享内容')
+                    return
+                  }
+                  setShareMode(true)
+                  setSelectedShareGroupIds([])
+                }}
+              />
             </div>
           </div>
           <div className='chat-main-content'>
-            <Bubble.List
-              ref={listRef}
-              items={bubbleItems}
-              role={bubbleRoles}
-              style={{ height: '100%', scrollBehavior: 'smooth' }}
-            />
+            {shareMode ? (
+              <div className='chat-main-share-select-list'>
+                {shareRows.map((row) => {
+                  const checked = selectedShareGroupIds.includes(row.groupId)
+                  return (
+                    <div
+                      key={row.id}
+                      className={`chat-main-share-select-row ${row.role === 'user' ? 'is-user' : 'is-assistant'}`}
+                    >
+                      <div className='chat-main-share-check-col'>
+                        <Checkbox
+                          checked={checked}
+                          onChange={(e) => toggleShareGroup(row.groupId, e.target.checked)}
+                        />
+                      </div>
+                      <div className='chat-main-share-bubble-col'>
+                        <div
+                          className={`chat-main-share-bubble ${row.role === 'user' ? 'is-user' : 'is-assistant'}`}
+                          onClick={() => toggleShareGroup(row.groupId, !checked)}
+                        >
+                          <Typography>{renderMarkdownWithCodeHighlighter(row.content)}</Typography>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <Bubble.List
+                ref={listRef}
+                items={bubbleItems}
+                role={bubbleRoles}
+                style={{ height: '100%', scrollBehavior: 'smooth' }}
+              />
+            )}
           </div>
           <div className='chat-main-footer'>
-            <Sender
-              loading={loading}
-              value={value}
-              placeholder="请输入你的问题，按 Enter 发送"
-              onChange={(v) => {
-                setValue(v)
-              }}
-              onSubmit={async () => {
-                await submitQuestion(value, { clearInput: true })
-              }}
-              onCancel={() => {
-                if (streamAbortRef.current) {
-                  streamAbortRef.current.abort()
-                  streamAbortRef.current = null
-                }
-                setChatList((prev) =>
-                  prev.map((msg) =>
-                    msg.id.startsWith('local_a_') && msg.streaming
-                      ? { ...msg, streaming: false, loading: false }
-                      : msg,
-                  ),
-                )
-                setLoading(false)
-                message.error('已取消发送')
-              }}
-              autoSize={{ minRows: 3, maxRows: 6 }}
-            />
+            {shareMode ? (
+              <div className='chat-main-share-footer'>
+                <div className='chat-main-share-footer-left'>
+                  <Button type="link" onClick={handleSelectAllShare}>
+                    {selectedShareCount === shareGroupIds.length && shareGroupIds.length > 0 ? '取消全选' : '全选'}
+                  </Button>
+                  <span>已选择{selectedShareCount}组对话</span>
+                </div>
+                <div className='chat-main-share-footer-right'>
+                  <Button onClick={exitShareMode}>取消</Button>
+                  <Button
+                    type="primary"
+                    disabled={!selectedShareCount}
+                    onClick={() => setShareModalOpen(true)}
+                  >
+                    创建分享链接
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className='chat-main-sender-wrap'>
+                <div className='chat-main-tools-inside'>
+                  <span>深度思考</span>
+                  <Switch
+                    size="small"
+                    checked={deepThinking}
+                    onChange={(checked) => setDeepThinking(checked)}
+                  />
+                </div>
+                <Sender
+                  loading={loading}
+                  value={value}
+                  placeholder="请输入你的问题，按 Enter 发送"
+                  onChange={(v) => {
+                    setValue(v)
+                  }}
+                  onSubmit={async () => {
+                    await submitQuestion(value, { clearInput: true })
+                  }}
+                  onCancel={() => {
+                    if (streamAbortRef.current) {
+                      streamAbortRef.current.abort()
+                      streamAbortRef.current = null
+                    }
+                    pauseCurrentStreamingAnswer().catch(() => {
+                      message.error('暂停回答失败')
+                    })
+                    setLoading(false)
+                    message.info('已暂停回答')
+                  }}
+                  autoSize={{ minRows: 3, maxRows: 6 }}
+                />
+              </div>
+            )}
           </div>
         </div>
+        <Modal
+          title="创建分享链接"
+          open={shareModalOpen}
+          onCancel={() => setShareModalOpen(false)}
+          footer={[
+            <Button key="cancel" onClick={() => setShareModalOpen(false)}>
+              取消
+            </Button>,
+            <Button
+              key="create"
+              type="primary"
+              loading={shareCreating}
+              onClick={copyShareLink}
+            >
+              创建并复制
+            </Button>,
+          ]}
+        >
+          <p>将基于当前选择的 {selectedShareCount} 组问答创建分享链接。</p>
+        </Modal>
         <LoginModal
           open={loginOpen}
           onCancel={() => {

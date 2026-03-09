@@ -1,8 +1,8 @@
 import { apiClient } from './client'
 import { clearToken, getToken } from './token'
 
-export async function ask({ conversationId, prompt }) {
-  const { data } = await apiClient.post('/api/ai/ask', { conversationId, prompt })
+export async function ask({ conversationId, prompt, deepThinking }) {
+  const { data } = await apiClient.post('/api/ai/ask', { conversationId, prompt, deepThinking })
   return data
 }
 
@@ -12,8 +12,8 @@ export async function summarizeConversationTitle({ conversationId }) {
 }
 
 export async function askStream(
-  { conversationId, prompt },
-  { onStart, onDelta, onDone, onError, signal } = {},
+  { conversationId, prompt, deepThinking },
+  { onStart, onDelta, onReasoning, onDone, onError, signal } = {},
 ) {
   const token = getToken()
   const resp = await fetch('/api/ai/ask/stream', {
@@ -22,7 +22,7 @@ export async function askStream(
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ conversationId, prompt }),
+    body: JSON.stringify({ conversationId, prompt, deepThinking }),
     signal,
   })
 
@@ -61,6 +61,7 @@ export async function askStream(
 
       if (payload?.type === 'start') onStart?.(payload)
       if (payload?.type === 'delta') onDelta?.(payload.delta || '')
+      if (payload?.type === 'reasoning') onReasoning?.(payload.delta || '')
       if (payload?.type === 'done') onDone?.(payload)
       if (payload?.type === 'error') onError?.(payload.message || '流式请求失败')
     }

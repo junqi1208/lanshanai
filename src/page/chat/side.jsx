@@ -1,9 +1,12 @@
 import { Conversations } from '@ant-design/x'
-import { Button, Avatar, Dropdown, Input, Modal, message } from 'antd'
+import { useMemo, useState } from 'react'
+import { Button, Avatar, Dropdown, Input, Modal, Spin, message } from 'antd'
 import {
   PlusOutlined,
+  SearchOutlined,
   EditOutlined,
   DeleteOutlined,
+  PushpinOutlined,
   SettingOutlined,
   LogoutOutlined,
   MoreOutlined,
@@ -15,15 +18,28 @@ export default function ChatSide(props) {
   const {
     collapsed,
     items = [],
+    hasMore = false,
+    loadingMore = false,
+    onListScroll,
     selectedKey,
     onSelect,
     onCreateNew,
     onRename,
+    onTogglePin,
     onDelete,
     onOpenSettings,
     onLogout,
     footerUser,
   } = props
+  const [searchMode, setSearchMode] = useState(false)
+  const [searchInput, setSearchInput] = useState('')
+  const [searchKeyword, setSearchKeyword] = useState('')
+
+  const displayItems = useMemo(() => {
+    const keyword = (searchKeyword || '').trim().toLowerCase()
+    if (!keyword) return items
+    return items.filter((item) => String(item?.label || '').toLowerCase().includes(keyword))
+  }, [items, searchKeyword])
 
   const openRenameModal = (conversation) => {
     let nextTitle = conversation?.label || ''
@@ -77,6 +93,11 @@ export default function ChatSide(props) {
         icon: <EditOutlined />,
       },
       {
+        label: conversation?.isPinned ? '取消置顶' : '置顶',
+        key: 'togglePin',
+        icon: <PushpinOutlined />,
+      },
+      {
         type: 'divider',
       },
       {
@@ -90,6 +111,9 @@ export default function ChatSide(props) {
       itemInfo.domEvent.stopPropagation()
       if (itemInfo.key === 'rename') {
         openRenameModal(conversation)
+      }
+      if (itemInfo.key === 'togglePin') {
+        onTogglePin?.(conversation.key, !conversation?.isPinned)
       }
       if (itemInfo.key === 'delete') {
         openDeleteModal(conversation)
@@ -146,24 +170,68 @@ export default function ChatSide(props) {
         </div> 
       </div>
       <div className='chat-side-add'>
-        <Button
-          type="primary"
-          className='chat-side-add-button'
-          onClick={() => onCreateNew?.()}
-        >
-          <PlusOutlined />
-          <span>新建对话</span>
-        </Button>
+        {searchMode ? (
+          <Input.Search
+            allowClear
+            autoFocus
+            value={searchInput}
+            placeholder="输入关键词并回车搜索"
+            onChange={(e) => {
+              setSearchInput(e.target.value)
+            }}
+            onBlur={() => {
+              setSearchInput('')
+              setSearchKeyword('')
+              setSearchMode(false)
+            }}
+            onSearch={(value, _event, info) => {
+              if (info?.source === 'clear') {
+                setSearchInput('')
+                setSearchKeyword('')
+                setSearchMode(false)
+                return
+              }
+              setSearchKeyword((value || '').trim())
+            }}
+          />
+        ) : (
+          <div className='chat-side-add-actions'>
+            <Button
+              type="primary"
+              className='chat-side-add-button'
+              onClick={() => onCreateNew?.()}
+            >
+              <PlusOutlined />
+              <span>新建对话</span>
+            </Button>
+            <Button
+              type="text"
+              className='chat-side-search-button'
+              icon={<SearchOutlined />}
+              onClick={() => {
+                setSearchMode(true)
+                setSearchInput('')
+                setSearchKeyword('')
+              }}
+            />
+          </div>
+        )}
       </div>
-      <div className='chat-side-list'>
+      <div className='chat-side-list' onScroll={onListScroll}>
         <Conversations
           menu={menuConfig}
-          items={items}
+          items={displayItems}
           groupable
           activeKey={selectedKey}
           onActiveChange={(key) => onSelect?.(key)}
           style={{ width: '100%' }}
         />
+        <div className='chat-side-list-loading'>
+          {loadingMore ? <Spin size="small" /> : null}
+          {!loadingMore && hasMore ? <span>下滑加载更多</span> : null}
+          {!loadingMore && !hasMore && displayItems.length > 0 ? <span>没有更多会话了</span> : null}
+          {!loadingMore && !displayItems.length && !!searchKeyword ? <span>未找到相关会话</span> : null}
+        </div>
       </div>
       <div className='chat-side-footer'>
         <div className='chat-side-footer-avatar'>

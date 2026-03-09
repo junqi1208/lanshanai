@@ -1,7 +1,9 @@
 import { apiClient } from './client'
 
-export async function listConversations() {
-  const { data } = await apiClient.get('/api/conversations')
+export async function listConversations({ page = 1, pageSize = 20 } = {}) {
+  const { data } = await apiClient.get('/api/conversations', {
+    params: { page, pageSize },
+  })
   return data
 }
 
@@ -15,16 +17,17 @@ export async function listMessages(conversationId) {
   return data
 }
 
-export async function addMessage(conversationId, { role, content }) {
+export async function addMessage(conversationId, { role, content, reasoning }) {
   const { data } = await apiClient.post(`/api/conversations/${conversationId}/messages`, {
     role,
     content,
+    reasoning,
   })
   return data
 }
 
-export async function updateConversation(conversationId, { title }) {
-  const { data } = await apiClient.patch(`/api/conversations/${conversationId}`, { title })
+export async function updateConversation(conversationId, payload = {}) {
+  const { data } = await apiClient.patch(`/api/conversations/${conversationId}`, payload)
   return data
 }
 
