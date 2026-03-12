@@ -547,6 +547,35 @@ function ChatPage() {
     setShareModalOpen(false)
   }, [])
 
+  const copyTextSafely = useCallback(async (text) => {
+    const value = String(text || '')
+    if (!value) return false
+
+    if (window.isSecureContext && navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value)
+        return true
+      } catch {
+        // 回退到 execCommand，兼容部分线上环境权限限制
+      }
+    }
+
+    try {
+      const textarea = document.createElement('textarea')
+      textarea.value = value
+      textarea.setAttribute('readonly', '')
+      textarea.style.position = 'fixed'
+      textarea.style.left = '-9999px'
+      document.body.appendChild(textarea)
+      textarea.select()
+      const copied = document.execCommand('copy')
+      document.body.removeChild(textarea)
+      return copied
+    } catch {
+      return false
+    }
+  }, [])
+
   const copyShareLink = useCallback(async () => {
     if (!activeConversationId) {
       message.warning('当前会话不可分享')
@@ -562,16 +591,34 @@ function ChatPage() {
         conversationId: activeConversationId,
         groupIds: selectedShareGroupIds,
       })
-      const shareLink = `${window.location.origin}${res?.sharePath || ''}`
-      await navigator.clipboard.writeText(shareLink)
-      message.success('分享链接已复制')
-      setShareModalOpen(false)
-    } catch {
-      message.error('创建或复制分享链接失败')
+      const sharePath = String(res?.sharePath || '').trim()
+      if (!sharePath) {
+        message.error('创建分享链接失败：返回链接为空')
+        return
+      }
+      const shareLink = /^https?:\/\//.test(sharePath)
+        ? sharePath
+        : `${window.location.origin}${sharePath}`
+
+      const copied = await copyTextSafely(shareLink)
+      if (copied) {
+        message.success('分享链接已复制')
+        setShareModalOpen(false)
+        return
+      }
+
+      notification.warning({
+        message: '分享链接已创建',
+        description: `自动复制失败，请手动复制：${shareLink}`,
+        placement: 'topRight',
+        duration: 8,
+      })
+    } catch (e) {
+      message.error(e?.response?.data?.message || '创建分享链接失败')
     } finally {
       setShareCreating(false)
     }
-  }, [activeConversationId, selectedShareGroupIds])
+  }, [activeConversationId, copyTextSafely, selectedShareGroupIds])
 
   const bubbleRoles = useMemo(
     () => ({
@@ -611,10 +658,10 @@ function ChatPage() {
             onClick={async (payload) => {
               const actionKey = typeof payload === 'string' ? payload : payload?.key
               if (actionKey === 'copyText') {
-                try {
-                  await navigator.clipboard.writeText(String(content || ''))
+                const copied = await copyTextSafely(String(content || ''))
+                if (copied) {
                   message.success('已复制')
-                } catch {
+                } else {
                   message.error('复制失败')
                 }
               }
@@ -631,7 +678,7 @@ function ChatPage() {
         typing: false,
       },
     }),
-    [actionItems, handleRetryQuestion, reasoningExpandedMap, renderMarkdownWithCodeHighlighter, shareMode, toggleReasoningExpanded],
+    [actionItems, copyTextSafely, handleRetryQuestion, reasoningExpandedMap, renderMarkdownWithCodeHighlighter, shareMode, toggleReasoningExpanded],
   )
 
   useEffect(() => {
