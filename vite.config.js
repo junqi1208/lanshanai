@@ -41,16 +41,5 @@ export default defineConfig({
   build: {
     cssCodeSplit: true,
     chunkSizeWarningLimit: 900,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return
-          if (id.includes('react-router')) return 'router-vendor'
-          if (id.includes('/react/') || id.includes('react-dom')) return 'react-vendor'
-          if (id.includes('antd') || id.includes('@ant-design')) return 'antd-vendor'
-          return 'vendor'
-        },
-      },
-    },
   },
 })
