@@ -1,7 +1,7 @@
 import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, notification, Checkbox, Button, Modal, Switch, Drawer, Grid } from 'antd'
 import { Actions, Bubble, CodeHighlighter, Sender } from '@ant-design/x'
 import XMarkdown from '@ant-design/x-markdown'
-import { RedoOutlined, CopyOutlined } from '@ant-design/icons'
+import { RedoOutlined, CopyOutlined, SendOutlined, PauseOutlined } from '@ant-design/icons'
 import ChatSide from './side'
 import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 const { Content, Sider } = Layout
@@ -24,6 +24,7 @@ import {
 
 
 const CONVERSATION_PAGE_SIZE = 20
+const SHARE_FEATURE_VISIBLE = false
 const LoginModal = lazy(() => import('../../components/loginModal'))
 const SettingModal = lazy(() => import('../../components/settingModal'))
 
@@ -383,6 +384,18 @@ function ChatPage() {
     await maybeGenerateConversationTitle(conversationId)
   }, [applyStreamBuffersToMessage, clearStreamFlushTimer, maybeGenerateConversationTitle])
 
+  const handleStopSending = useCallback(() => {
+    if (streamAbortRef.current) {
+      streamAbortRef.current.abort()
+      streamAbortRef.current = null
+    }
+    pauseCurrentStreamingAnswer().catch(() => {
+      message.error('暂停回答失败')
+    })
+    setLoading(false)
+    message.info('已暂停回答')
+  }, [pauseCurrentStreamingAnswer])
+
   const submitQuestion = useCallback(
     async (rawPrompt, options = {}) => {
       const { clearInput = false } = options
@@ -635,7 +648,11 @@ function ChatPage() {
               {hasReasoning ? (
                 <div className="chat-ai-reasoning">
                   <div className="chat-ai-reasoning-head">
-                    <div className="chat-ai-reasoning-title">深度思考</div>
+                    <div className="chat-ai-reasoning-title-wrap">
+                      <span className="chat-ai-reasoning-dot" />
+                      <div className="chat-ai-reasoning-title">深度思考</div>
+                      <div className="chat-ai-reasoning-subtitle">以下内容为模型推理过程</div>
+                    </div>
                     <Button
                       type="link"
                       size="small"
@@ -926,20 +943,22 @@ function ChatPage() {
               />
             ) : null}
             <div className='chat-main-title'>{activeTitle}</div>
-            <div className='chat-main-share'>
-              <Button
-                type="text"
-                icon={<SvgIcon name={'share'} size={18}></SvgIcon>}
-                onClick={() => {
-                  if (!chatList.length) {
-                    message.warning('当前会话暂无可分享内容')
-                    return
-                  }
-                  setShareMode(true)
-                  setSelectedShareGroupIds([])
-                }}
-              />
-            </div>
+            {SHARE_FEATURE_VISIBLE ? (
+              <div className='chat-main-share'>
+                <Button
+                  type="text"
+                  icon={<SvgIcon name={'share'} size={18}></SvgIcon>}
+                  onClick={() => {
+                    if (!chatList.length) {
+                      message.warning('当前会话暂无可分享内容')
+                      return
+                    }
+                    setShareMode(true)
+                    setSelectedShareGroupIds([])
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
           <div className='chat-main-content'>
             {shareMode ? (
@@ -1001,11 +1020,30 @@ function ChatPage() {
             ) : (
               <div className='chat-main-sender-wrap'>
                 <div className='chat-main-tools-inside'>
-                  <span>深度思考</span>
-                  <Switch
+                  <div className={`chat-main-thinking-card ${deepThinking ? 'is-active' : ''}`}>
+                    <div className='chat-main-thinking-texts'>
+                      <span className='chat-main-thinking-title'>深度思考</span>
+                    </div>
+                    <Switch
+                      className='chat-main-thinking-switch'
+                      size="small"
+                      checked={deepThinking}
+                      onChange={(checked) => setDeepThinking(checked)}
+                    />
+                  </div>
+                  <Button
                     size="small"
-                    checked={deepThinking}
-                    onChange={(checked) => setDeepThinking(checked)}
+                    type={loading ? 'default' : 'primary'}
+                    className={`chat-main-send-action ${loading ? 'is-stop' : 'is-send'}`}
+                    icon={loading ? <PauseOutlined /> : <SendOutlined />}
+                    aria-label={loading ? '停止' : '发送'}
+                    onClick={async () => {
+                      if (loading) {
+                        handleStopSending()
+                        return
+                      }
+                      await submitQuestion(value, { clearInput: true })
+                    }}
                   />
                 </div>
                 <Sender
@@ -1018,17 +1056,7 @@ function ChatPage() {
                   onSubmit={async () => {
                     await submitQuestion(value, { clearInput: true })
                   }}
-                  onCancel={() => {
-                    if (streamAbortRef.current) {
-                      streamAbortRef.current.abort()
-                      streamAbortRef.current = null
-                    }
-                    pauseCurrentStreamingAnswer().catch(() => {
-                      message.error('暂停回答失败')
-                    })
-                    setLoading(false)
-                    message.info('已暂停回答')
-                  }}
+                  onCancel={handleStopSending}
                   autoSize={{ minRows: 3, maxRows: 6 }}
                 />
               </div>
