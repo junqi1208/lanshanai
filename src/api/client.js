@@ -16,7 +16,34 @@ apiClient.interceptors.request.use((config) => {
 })
 
 apiClient.interceptors.response.use(
-  (resp) => resp,
+  (resp) => {
+    const payload = resp?.data
+    const isWrappedResponse =
+      payload &&
+      typeof payload === 'object' &&
+      Object.prototype.hasOwnProperty.call(payload, 'code') &&
+      Object.prototype.hasOwnProperty.call(payload, 'message') &&
+      Object.prototype.hasOwnProperty.call(payload, 'data')
+
+    if (!isWrappedResponse) {
+      return resp
+    }
+
+    const code = Number(payload.code)
+    if (code === 200) {
+      return {
+        ...resp,
+        data: payload.data,
+      }
+    }
+
+    const businessError = new Error(payload.message || '请求失败')
+    businessError.response = {
+      ...resp,
+      data: payload,
+    }
+    return Promise.reject(businessError)
+  },
   (err) => {
     const status = err?.response?.status
     if (status === 401) {
