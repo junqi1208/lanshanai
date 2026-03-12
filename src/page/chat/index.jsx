@@ -3,18 +3,16 @@ import { Actions, Bubble, CodeHighlighter, Sender } from '@ant-design/x'
 import XMarkdown from '@ant-design/x-markdown'
 import { RedoOutlined, CopyOutlined } from '@ant-design/icons'
 import ChatSide from './side'
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 const { Content, Sider } = Layout
 import SvgIcon from '../../components/svgIcon'
-import LoginModal from '../../components/loginModal'
-import SettingModal from '../../components/settingModal'
 import useThemeMode from '@/hooks/useThemeMode'
 import '@/style/chat.scss'
 import { clearToken, getToken, setToken } from '@/api/token'
 import { login, me, register, updateMe } from '@/api/auth'
 import { askStream, summarizeConversationTitle } from '@/api/ai'
 import { createShareLink } from '@/api/share'
-import BotAvatar from '@/assets/images/bot.png'
+import BotAvatar from '@/assets/images/bot-256.png'
 import {
   addMessage,
   createConversation,
@@ -26,6 +24,8 @@ import {
 
 
 const CONVERSATION_PAGE_SIZE = 20
+const LoginModal = lazy(() => import('../../components/loginModal'))
+const SettingModal = lazy(() => import('../../components/settingModal'))
 
 const sortConversations = (list = []) =>
   [...list].sort((a, b) => {
@@ -1008,55 +1008,63 @@ function ChatPage() {
         >
           <p>将基于当前选择的 {selectedShareCount} 组问答创建分享链接。</p>
         </Modal>
-        <LoginModal
-          open={loginOpen}
-          onCancel={() => {
-            if (!getToken()) return
-            setLoginOpen(false)
-          }}
-          onLogin={async (values) => {
-            try {
-              const res = await login(values)
-              if (!res?.accessToken) return false
-              setToken(res.accessToken)
-              setLoginOpen(false)
-              await refreshMeAndConvs()
-              notification.success({
-                message: '欢迎回来',
-                description: `很高兴再次见到你，${res?.user?.username || values?.username || ''}`,
-                placement: 'topRight',
-              })
-              return true
-            } catch (e) {
-              message.error(e?.response?.data?.message || '登录失败')
-              return false
-            }
-          }}
-          onRegister={async (values) => {
-            try {
-              const res = await register(values)
-              if (!res?.accessToken) return false
-              setToken(res.accessToken)
-              setLoginOpen(false)
-              await refreshMeAndConvs()
-              return true
-            } catch (e) {
-              message.error(e?.response?.data?.message || '注册失败')
-              return false
-            }
-          }}
-        />
-        <SettingModal
-          open={settingOpen}
-          onCancel={() => setSettingOpen(false)}
-          userInfo={currentUser}
-          themeMode={themeMode}
-          onChangeTheme={applyThemeMode}
-          onSaveUser={async ({ nickname, gender, avatar }) => {
-            const updated = await updateMe({ nickname, gender, avatar })
-            setCurrentUser(updated)
-          }}
-        />
+        {loginOpen ? (
+          <Suspense fallback={null}>
+            <LoginModal
+              open={loginOpen}
+              onCancel={() => {
+                if (!getToken()) return
+                setLoginOpen(false)
+              }}
+              onLogin={async (values) => {
+                try {
+                  const res = await login(values)
+                  if (!res?.accessToken) return false
+                  setToken(res.accessToken)
+                  setLoginOpen(false)
+                  await refreshMeAndConvs()
+                  notification.success({
+                    message: '欢迎回来',
+                    description: `很高兴再次见到你，${res?.user?.username || values?.username || ''}`,
+                    placement: 'topRight',
+                  })
+                  return true
+                } catch (e) {
+                  message.error(e?.response?.data?.message || '登录失败')
+                  return false
+                }
+              }}
+              onRegister={async (values) => {
+                try {
+                  const res = await register(values)
+                  if (!res?.accessToken) return false
+                  setToken(res.accessToken)
+                  setLoginOpen(false)
+                  await refreshMeAndConvs()
+                  return true
+                } catch (e) {
+                  message.error(e?.response?.data?.message || '注册失败')
+                  return false
+                }
+              }}
+            />
+          </Suspense>
+        ) : null}
+        {settingOpen ? (
+          <Suspense fallback={null}>
+            <SettingModal
+              open={settingOpen}
+              onCancel={() => setSettingOpen(false)}
+              userInfo={currentUser}
+              themeMode={themeMode}
+              onChangeTheme={applyThemeMode}
+              onSaveUser={async ({ nickname, gender, avatar }) => {
+                const updated = await updateMe({ nickname, gender, avatar })
+                setCurrentUser(updated)
+              }}
+            />
+          </Suspense>
+        ) : null}
       </Content>
       </Layout>
     </ConfigProvider>

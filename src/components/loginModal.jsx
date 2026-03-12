@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Modal, Form, Input, Button, Typography, Carousel } from 'antd'
 import '@/style/loginModal.scss'
-import logo from '@/assets/images/logo.png'
+import logo from '@/assets/images/logo-256.png'
 import { MOUNTAIN_CAROUSEL_ITEMS } from '@/constants/mountainCarousel'
 const { Text, Title } = Typography
 
@@ -58,7 +58,13 @@ export default function LoginModal({
           >
             {MOUNTAIN_CAROUSEL_ITEMS.map((item, index) => (
               <div className="login-modal-carousel-item" key={item.src}>
-                <img src={item.src} alt={`览山风景 ${index + 1}`} />
+                <img
+                  src={item.src}
+                  alt={`览山风景 ${index + 1}`}
+                  loading={index === 0 ? 'eager' : 'lazy'}
+                  decoding="async"
+                  fetchPriority={index === 0 ? 'high' : 'low'}
+                />
               </div>
             ))}
           </Carousel>
@@ -68,7 +74,7 @@ export default function LoginModal({
             <div className="login-panel-main">
               <div className="login-panel-top">
                 <div className="login-header-logo">
-                  <img src={logo} alt="logo" />
+                  <img src={logo} alt="logo" loading="lazy" decoding="async" />
                   <div className="login-brand-text">
                     <span>览山 Ai</span>
                     <Text type="secondary">智能对话与知识助手</Text>

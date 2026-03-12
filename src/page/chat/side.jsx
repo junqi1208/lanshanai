@@ -11,7 +11,7 @@ import {
   LogoutOutlined,
   MoreOutlined,
 } from '@ant-design/icons'
-import logo from '@/assets/images/logo.png'
+import logo from '@/assets/images/logo-256.png'
 import '@/style/side.scss'
 
 export default function ChatSide(props) {
@@ -163,7 +163,7 @@ export default function ChatSide(props) {
     <div className='chat-side'>
       <div className="chat-side-header">
         <div className="chat-side-header-title">
-          <img src={logo} alt="logo" />
+          <img src={logo} alt="logo" loading="eager" decoding="async" fetchPriority="high" />
           { 
             collapsed ? null : <span>览山Ai</span>
           }

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { Spin, Empty, Typography, message, Button, Tag } from 'antd'
 import XMarkdown from '@ant-design/x-markdown'
 import { getShareDetail } from '@/api/share'
-import logo from '@/assets/images/logo.png'
+import logo from '@/assets/images/logo-256.png'
 import '@/style/share.scss'
 
 export default function SharePage() {
@@ -40,7 +40,7 @@ export default function SharePage() {
         <div className='share-page-header'>
           <div className='share-page-header-top'>
             <div className='share-page-brand'>
-              <img src={logo} alt="览山AI" />
+              <img src={logo} alt="览山AI" loading="lazy" decoding="async" />
               <div className='share-page-brand-text'>
                 <div className='share-page-brand-name'>览山AI</div>
                 <div className='share-page-brand-desc'>智能问答 · 知识协作</div>
