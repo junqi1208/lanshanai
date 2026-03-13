@@ -6,6 +6,18 @@ export async function ask({ conversationId, prompt, deepThinking }) {
   return data
 }
 
+// 使用错误处理包装的版本
+export const askWithErrorHandling = async ({ conversationId, prompt, deepThinking }, options = {}) => {
+  const { handleError } = await import('@/utils/errorHandler')
+  try {
+    const result = await ask({ conversationId, prompt, deepThinking })
+    return result
+  } catch (error) {
+    handleError(error, options)
+    throw error
+  }
+}
+
 export async function summarizeConversationTitle({ conversationId }) {
   const { data } = await apiClient.post('/api/ai/summarize-title', { conversationId })
   return data

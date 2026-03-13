@@ -37,7 +37,9 @@ apiClient.interceptors.response.use(
       }
     }
 
+    // 添加错误码到错误对象
     const businessError = new Error(payload.message || '请求失败')
+    businessError.code = code
     businessError.response = {
       ...resp,
       data: payload,
@@ -49,6 +51,10 @@ apiClient.interceptors.response.use(
     if (status === 401) {
       clearToken()
       window.dispatchEvent(new CustomEvent('auth:logout'))
+    }
+    // 添加 HTTP 状态码
+    if (err?.response?.status) {
+      err.code = err.response.status
     }
     return Promise.reject(err)
   },
