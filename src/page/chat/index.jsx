@@ -1,7 +1,8 @@
-import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, notification, Checkbox, Button, Modal, Switch, Drawer, Grid } from 'antd'
+import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, notification, Checkbox, Button, Modal, Switch, Drawer, Grid, Input } from 'antd'
 import { Actions, Bubble, CodeHighlighter, Sender } from '@ant-design/x'
 import XMarkdown from '@ant-design/x-markdown'
 import { RedoOutlined, CopyOutlined, SendOutlined, PauseOutlined } from '@ant-design/icons'
+import copy from 'copy-to-clipboard'
 import ChatSide from './side'
 import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 const { Content, Sider } = Layout
@@ -24,7 +25,7 @@ import {
 
 
 const CONVERSATION_PAGE_SIZE = 20
-const SHARE_FEATURE_VISIBLE = false
+const SHARE_FEATURE_VISIBLE = true
 const LoginModal = lazy(() => import('../../components/loginModal'))
 const SettingModal = lazy(() => import('../../components/settingModal'))
 
@@ -82,6 +83,9 @@ function ChatPage() {
   const [selectedShareGroupIds, setSelectedShareGroupIds] = useState([])
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [shareCreating, setShareCreating] = useState(false)
+  const [shareResultOpen, setShareResultOpen] = useState(false)
+  const [shareResultLink, setShareResultLink] = useState('')
+  const [shareAutoCopied, setShareAutoCopied] = useState(false)
 
   const renderMarkdownWithCodeHighlighter = useCallback((content) => {
     const source = String(content || '')
@@ -560,33 +564,15 @@ function ChatPage() {
     setShareModalOpen(false)
   }, [])
 
-  const copyTextSafely = useCallback(async (text) => {
+  const copyTextSafely = useCallback((text) => {
     const value = String(text || '')
     if (!value) return false
 
     if (window.isSecureContext && navigator?.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(value)
-        return true
-      } catch {
-        // 回退到 execCommand，兼容部分线上环境权限限制
-      }
+      // 在安全上下文里也统一走插件，保持行为一致
     }
 
-    try {
-      const textarea = document.createElement('textarea')
-      textarea.value = value
-      textarea.setAttribute('readonly', '')
-      textarea.style.position = 'fixed'
-      textarea.style.left = '-9999px'
-      document.body.appendChild(textarea)
-      textarea.select()
-      const copied = document.execCommand('copy')
-      document.body.removeChild(textarea)
-      return copied
-    } catch {
-      return false
-    }
+    return copy(value)
   }, [])
 
   const copyShareLink = useCallback(async () => {
@@ -613,25 +599,31 @@ function ChatPage() {
         ? sharePath
         : `${window.location.origin}${sharePath}`
 
-      const copied = await copyTextSafely(shareLink)
+      const copied = copyTextSafely(shareLink)
+      setShareResultLink(shareLink)
+      setShareAutoCopied(copied)
+      setShareResultOpen(true)
+      setShareModalOpen(false)
       if (copied) {
-        message.success('分享链接已复制')
-        setShareModalOpen(false)
-        return
+        message.success('分享链接已创建并复制')
+      } else {
+        message.warning('分享链接已创建，请手动复制')
       }
-
-      notification.warning({
-        message: '分享链接已创建',
-        description: `自动复制失败，请手动复制：${shareLink}`,
-        placement: 'topRight',
-        duration: 8,
-      })
     } catch (e) {
       message.error(e?.response?.data?.message || '创建分享链接失败')
     } finally {
       setShareCreating(false)
     }
   }, [activeConversationId, copyTextSafely, selectedShareGroupIds])
+
+  const handleCopyShareResultLink = useCallback(() => {
+    const copied = copyTextSafely(shareResultLink)
+    if (copied) {
+      message.success('链接已复制')
+      return
+    }
+    message.error('复制失败，请手动选择复制')
+  }, [copyTextSafely, shareResultLink])
 
   const bubbleRoles = useMemo(
     () => ({
@@ -675,7 +667,7 @@ function ChatPage() {
             onClick={async (payload) => {
               const actionKey = typeof payload === 'string' ? payload : payload?.key
               if (actionKey === 'copyText') {
-                const copied = await copyTextSafely(String(content || ''))
+                const copied = copyTextSafely(String(content || ''))
                 if (copied) {
                   message.success('已复制')
                 } else {
@@ -1082,6 +1074,28 @@ function ChatPage() {
           ]}
         >
           <p>将基于当前选择的 {selectedShareCount} 组问答创建分享链接。</p>
+        </Modal>
+        <Modal
+          title="分享链接已创建"
+          open={shareResultOpen}
+          onCancel={() => setShareResultOpen(false)}
+          footer={[
+            <Button key="close" onClick={() => setShareResultOpen(false)}>
+              我知道了
+            </Button>,
+            <Button key="copy" type="primary" onClick={handleCopyShareResultLink}>
+              复制链接
+            </Button>,
+          ]}
+        >
+          <Typography.Paragraph style={{ marginBottom: 12 }}>
+            {shareAutoCopied ? '已自动复制到剪贴板，可直接粘贴使用。' : '自动复制失败，请手动复制下方链接。'}
+          </Typography.Paragraph>
+          <Input
+            value={shareResultLink}
+            readOnly
+            onFocus={(e) => e.target.select()}
+          />
         </Modal>
         {loginOpen ? (
           <Suspense fallback={null}>
