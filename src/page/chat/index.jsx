@@ -1,31 +1,50 @@
-import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, notification, Checkbox, Button, Modal, Switch, Drawer, Grid, Input } from 'antd'
+import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, notification, Checkbox, Button, Modal, Drawer, Grid, Input } from 'antd'
 import { Actions, Bubble, CodeHighlighter, Sender } from '@ant-design/x'
 import XMarkdown from '@ant-design/x-markdown'
-import { RedoOutlined, CopyOutlined, SendOutlined, PauseOutlined } from '@ant-design/icons'
+import { RedoOutlined, CopyOutlined, SendOutlined, PauseOutlined, PaperClipOutlined, CloseOutlined } from '@ant-design/icons'
 import copy from 'copy-to-clipboard'
 import ChatSide from './side'
 import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 const { Content, Sider } = Layout
+import ChatMessageAttachments, { parseMessageAttachments } from '../../components/chatMessageAttachments'
+import { ReplyStyleNeonTrigger, ReplyStylePanel } from '../../components/replyStylePicker'
+import { getStoredReplyStyle, storeReplyStyle } from '@/constants/replyStyles'
+import ChatModelSelect from '../../components/chatModelSelect'
+import {
+  getChatModelMeta,
+  getStoredChatModel,
+  getUploadAcceptByModel,
+  getUploadHintByModel,
+  isImageAttachment,
+  storeChatModel,
+  MAX_CHAT_UPLOAD_FILE_SIZE,
+  MAX_CHAT_UPLOAD_FILE_COUNT,
+} from '@/constants/chatModels'
 import SvgIcon from '../../components/svgIcon'
 import useThemeMode from '@/hooks/useThemeMode'
 import '@/style/chat.scss'
 import { clearToken, getToken, setToken } from '@/api/token'
 import { login, me, register, updateMe } from '@/api/auth'
 import { askStream, summarizeConversationTitle } from '@/api/ai'
+import { deleteFile, uploadFile } from '@/api/files'
 import { createShareLink } from '@/api/share'
 import BotAvatar from '@/assets/images/bot-256.png'
 import {
-  addMessage,
   createConversation,
   deleteConversation,
   listConversations,
   listMessages,
   updateConversation,
 } from '@/api/conversations'
-
+import {
+  EMPTY_HERO_TEXT,
+  startEmptyHeroTypewriter as runEmptyHeroTypewriter,
+} from '@/utils/emptyHeroTypewriter'
+import { getApiErrorMessage } from '@/utils/getApiErrorMessage'
 
 const CONVERSATION_PAGE_SIZE = 20
 const SHARE_FEATURE_VISIBLE = true
+const COMPOSER_MORPH_MS = 580
 const LoginModal = lazy(() => import('../../components/loginModal'))
 const SettingModal = lazy(() => import('../../components/settingModal'))
 
@@ -62,11 +81,16 @@ function ChatPage() {
   const streamReasoningBufferRef = useRef('')
   const streamFlushTimerRef = useRef(null)
   const activeStreamMetaRef = useRef({ conversationId: '', localAiId: '', paused: false })
+  const activeConversationIdRef = useRef('')
+  const messagesLoadSeqRef = useRef(0)
+  const streamPendingRef = useRef(false)
   const [collapsed, setCollapsed] = useState(false)
   const [mobileSideOpen, setMobileSideOpen] = useState(false)
   const [value, setValue] = useState('')
   const [loading, setLoading] = useState(false)
-  const [deepThinking, setDeepThinking] = useState(false)
+  const [replyStyle, setReplyStyle] = useState(() => getStoredReplyStyle())
+  const [modelId, setModelId] = useState(() => getStoredChatModel())
+  const [stylePanelOpen, setStylePanelOpen] = useState(false)
   const [reasoningExpandedMap, setReasoningExpandedMap] = useState({})
   const [loginOpen, setLoginOpen] = useState(() => !getToken())
   const [settingOpen, setSettingOpen] = useState(false)
@@ -86,6 +110,9 @@ function ChatPage() {
   const [shareResultOpen, setShareResultOpen] = useState(false)
   const [shareResultLink, setShareResultLink] = useState('')
   const [shareAutoCopied, setShareAutoCopied] = useState(false)
+  const [pendingFiles, setPendingFiles] = useState([])
+  const [uploadingFile, setUploadingFile] = useState(false)
+  const fileInputRef = useRef(null)
 
   const renderMarkdownWithCodeHighlighter = useCallback((content) => {
     const source = String(content || '')
@@ -181,20 +208,88 @@ function ChatPage() {
   }, [conversations])
 
   const ensureConversation = useCallback(async () => {
-    if (activeConversationId) return activeConversationId
+    if (activeConversationIdRef.current) return activeConversationIdRef.current
     const conv = await createConversation({})
     setConversations((prev) => sortConversations([conv, ...prev]))
+    activeConversationIdRef.current = conv.id
     setActiveConversationId(conv.id)
     return conv.id
-  }, [activeConversationId])
+  }, [])
+
+  const mapServerMessages = useCallback((msgs) => {
+    return (msgs || []).map((m) => ({
+      id: m.id,
+      type: m.role === 'user' ? 'user' : 'bot',
+      message: m.content,
+      reasoning: m.reasoning || '',
+      attachments: parseMessageAttachments(m.attachments),
+      streaming: false,
+    }))
+  }, [])
+
+  const scrollToBottom = useCallback((behavior = 'smooth') => {
+    requestAnimationFrame(() => {
+      listRef.current?.scrollTo({ top: 'bottom', behavior })
+    })
+  }, [])
+
+  const loadConversationMessages = useCallback(
+    async (conversationId, options = {}) => {
+      const { force = false } = options
+      if (!conversationId) return
+
+      if (!force) {
+        if (streamPendingRef.current) return
+        if (streamAbortRef.current && activeStreamMetaRef.current.conversationId === conversationId) {
+          return
+        }
+      }
+
+      if (streamAbortRef.current) {
+        streamAbortRef.current.abort()
+        streamAbortRef.current = null
+      }
+      setLoading(false)
+
+      const loadSeq = ++messagesLoadSeqRef.current
+      try {
+        const msgs = await listMessages(conversationId)
+        if (loadSeq !== messagesLoadSeqRef.current) return
+        if (activeConversationIdRef.current !== conversationId) return
+        if (!force && streamAbortRef.current) return
+
+        setChatList(mapServerMessages(msgs))
+        scrollToBottom('auto')
+      } catch (e) {
+        if (loadSeq === messagesLoadSeqRef.current) {
+          message.error(getApiErrorMessage(e, '加载会话失败'))
+        }
+      }
+    },
+    [mapServerMessages, scrollToBottom],
+  )
+
+  const syncMessagesAfterStream = useCallback(
+    async (conversationId) => {
+      if (!conversationId || streamAbortRef.current) return
+
+      const loadSeq = ++messagesLoadSeqRef.current
+      try {
+        const msgs = await listMessages(conversationId)
+        if (loadSeq !== messagesLoadSeqRef.current) return
+        if (activeConversationIdRef.current !== conversationId) return
+        if (streamAbortRef.current) return
+
+        setChatList(mapServerMessages(msgs))
+      } catch {
+        // keep local streamed content if sync fails
+      }
+    },
+    [mapServerMessages],
+  )
 
   const bubbleItems = useMemo(() => {
-    let latestUserPrompt = ''
     return chatList.map((item, index) => {
-      if (item.type === 'user') {
-        latestUserPrompt = item.message
-      }
-      const isAi = item.type !== 'user'
       return {
         key: item.id || `msg_${index}`,
         role: item.type === 'user' ? 'user' : 'ai',
@@ -202,7 +297,6 @@ function ChatPage() {
         reasoning: item.reasoning || '',
         loading: !!item.loading,
         typing: item.streaming ? { effect: 'fade-in', step: 3 } : false,
-        retryPrompt: isAi ? latestUserPrompt : '',
       }
     })
   }, [chatList])
@@ -248,12 +342,6 @@ function ChatPage() {
     }),
     [resolvedTheme],
   )
-
-  const scrollToBottom = useCallback((behavior = 'smooth') => {
-    requestAnimationFrame(() => {
-      listRef.current?.scrollTo({ top: 'bottom', behavior })
-    })
-  }, [])
 
   const clearStreamFlushTimer = useCallback(() => {
     if (!streamFlushTimerRef.current) return
@@ -327,29 +415,10 @@ function ChatPage() {
     const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight
     if (distanceToBottom <= 40) {
       loadMoreConversations().catch((e) => {
-        message.error(e?.response?.data?.message || '加载更多会话失败')
+        message.error(getApiErrorMessage(e, '加载更多会话失败'))
       })
     }
   }, [conversationHasMore, conversationLoadingMore, loadMoreConversations])
-
-  const loadConversationMessages = useCallback(async (conversationId) => {
-    if (streamAbortRef.current) {
-      streamAbortRef.current.abort()
-      streamAbortRef.current = null
-    }
-    setLoading(false)
-    const msgs = await listMessages(conversationId)
-    setChatList(
-      msgs.map((m) => ({
-        id: m.id,
-        type: m.role === 'user' ? 'user' : 'bot',
-        message: m.content,
-        reasoning: m.reasoning || '',
-        streaming: false,
-      })),
-    )
-    scrollToBottom('auto')
-  }, [scrollToBottom])
 
   const maybeGenerateConversationTitle = useCallback(
     async (conversationId) => {
@@ -376,15 +445,6 @@ function ChatPage() {
     activeStreamMetaRef.current = { conversationId, localAiId, paused: true }
     clearStreamFlushTimer()
     applyStreamBuffersToMessage(localAiId, { finish: true })
-    const partialAnswer = String(streamTextBufferRef.current || '').trim()
-    const partialReasoning = String(streamReasoningBufferRef.current || '').trim()
-    if (partialAnswer) {
-      await addMessage(conversationId, {
-        role: 'assistant',
-        content: partialAnswer,
-        reasoning: partialReasoning || undefined,
-      })
-    }
     await maybeGenerateConversationTitle(conversationId)
   }, [applyStreamBuffersToMessage, clearStreamFlushTimer, maybeGenerateConversationTitle])
 
@@ -400,6 +460,90 @@ function ChatPage() {
     message.info('已暂停回答')
   }, [pauseCurrentStreamingAnswer])
 
+  const handlePickFile = useCallback(() => {
+    if (!getToken()) {
+      setLoginOpen(true)
+      return
+    }
+    if (pendingFiles.length >= MAX_CHAT_UPLOAD_FILE_COUNT) {
+      message.warning(`最多只能上传 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个文件`)
+      return
+    }
+    fileInputRef.current?.click()
+  }, [pendingFiles.length])
+
+  const handleFileChange = useCallback(async (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    const lowerName = file.name.toLowerCase()
+    const isDoc = lowerName.endsWith('.pdf') || lowerName.endsWith('.docx')
+    const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif)$/.test(lowerName)
+    const modelMeta = getChatModelMeta(modelId)
+
+    if (!isDoc && !(modelMeta.supportsImage && isImage)) {
+      message.warning(modelMeta.supportsImage ? '仅支持 PDF、Word 或常见图片格式' : '当前模型仅支持 PDF 与 Word（.docx）')
+      return
+    }
+    if (pendingFiles.length >= MAX_CHAT_UPLOAD_FILE_COUNT) {
+      message.warning(`最多只能上传 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个文件`)
+      return
+    }
+    if (file.size > MAX_CHAT_UPLOAD_FILE_SIZE) {
+      message.warning('文件大小不能超过 5MB')
+      return
+    }
+
+    setUploadingFile(true)
+    try {
+      const uploaded = await uploadFile(file)
+      setPendingFiles((prev) => [
+        ...prev,
+        {
+          fileId: uploaded.fileId,
+          originalName: uploaded.originalName,
+          mimeType: uploaded.mimeType,
+          charCount: uploaded.charCount,
+        },
+      ])
+      message.success(`已上传：${uploaded.originalName}`)
+    } catch (e) {
+      message.error(getApiErrorMessage(e, '文件上传失败'))
+    } finally {
+      setUploadingFile(false)
+    }
+  }, [modelId, pendingFiles.length])
+
+  const handleRemovePendingFile = useCallback(async (fileId) => {
+    setPendingFiles((prev) => prev.filter((item) => item.fileId !== fileId))
+    try {
+      await deleteFile(fileId)
+    } catch {
+      // ignore delete failure for removed local item
+    }
+  }, [])
+
+  const handleChatModelChange = useCallback((nextModelId) => {
+    setModelId(nextModelId)
+    storeChatModel(nextModelId)
+    const meta = getChatModelMeta(nextModelId)
+    if (!meta.supportsImage) {
+      setPendingFiles((prev) => {
+        const kept = prev.filter((item) => !isImageAttachment(item.originalName, item.mimeType))
+        if (kept.length !== prev.length) {
+          message.info('已移除图片附件（当前模型不支持图片识别）')
+        }
+        return kept
+      })
+    }
+  }, [])
+
+  const handleReplyStyleChange = useCallback((nextStyle) => {
+    setReplyStyle(nextStyle)
+    storeReplyStyle(nextStyle)
+  }, [])
+
   const submitQuestion = useCallback(
     async (rawPrompt, options = {}) => {
       const { clearInput = false } = options
@@ -414,8 +558,23 @@ function ChatPage() {
         return
       }
 
+      const fileIds = pendingFiles.map((item) => item.fileId)
+      const attachmentSnapshot = pendingFiles.map((item) => ({
+        fileId: item.fileId,
+        originalName: item.originalName,
+        mimeType: item.mimeType,
+      }))
+
+      setPendingFiles([])
+      if (fileInputRef.current) fileInputRef.current.value = ''
+
       setLoading(true)
-      const localUserMsg = { id: `local_u_${Date.now()}`, type: 'user', message: trimmed }
+      const localUserMsg = {
+        id: `local_u_${Date.now()}`,
+        type: 'user',
+        message: trimmed,
+        attachments: attachmentSnapshot,
+      }
       const localAiId = `local_a_${Date.now()}`
       setChatList((prev) => [
         ...prev,
@@ -425,6 +584,9 @@ function ChatPage() {
       if (clearInput) setValue('')
       scrollToBottom()
 
+      streamPendingRef.current = true
+      let currentLocalAiId = localAiId
+
       try {
         const cid = await ensureConversation()
         const abortController = new AbortController()
@@ -432,19 +594,20 @@ function ChatPage() {
         streamTextBufferRef.current = ''
         streamReasoningBufferRef.current = ''
         activeStreamMetaRef.current = { conversationId: cid, localAiId, paused: false }
+        streamPendingRef.current = false
 
         await askStream(
-          { conversationId: cid, prompt: trimmed, deepThinking },
+          {
+            conversationId: cid,
+            prompt: trimmed,
+            modelId,
+            replyStyle,
+            deepThinking: modelId === 'deepseek-v4-pro',
+            fileIds: fileIds.length ? fileIds : undefined,
+          },
           {
             signal: abortController.signal,
-            onStart: (payload) => {
-              if (
-                payload?.conversationId &&
-                payload.conversationId !== activeConversationId
-              ) {
-                setActiveConversationId(payload.conversationId)
-              }
-            },
+            onStart: () => {},
             onDelta: (delta) => {
               streamTextBufferRef.current += delta
               scheduleStreamFlush(localAiId)
@@ -453,9 +616,10 @@ function ChatPage() {
               streamReasoningBufferRef.current += delta
               scheduleStreamFlush(localAiId)
             },
-            onDone: () => {
+            onDone: async () => {
               clearStreamFlushTimer()
               applyStreamBuffersToMessage(localAiId, { finish: true })
+              await syncMessagesAfterStream(cid)
               maybeGenerateConversationTitle(cid)
             },
             onError: (errMsg) => {
@@ -472,18 +636,17 @@ function ChatPage() {
           setConversationHasMore(Boolean(convRes?.hasMore))
         }
       } catch (e) {
-        const errMsg = e?.name === 'AbortError' ? '已取消发送' : e?.message || e?.response?.data?.message || '发送失败'
+        const errMsg = e?.name === 'AbortError' ? '已取消发送' : getApiErrorMessage(e, '发送失败')
         setChatList((prev) =>
           prev.map((msg) =>
-            msg.id.startsWith('local_a_') && msg.streaming
-              ? { ...msg, streaming: false, loading: false }
-              : msg,
+            msg.id === currentLocalAiId ? { ...msg, streaming: false, loading: false } : msg,
           ),
         )
         if (e?.name !== 'AbortError') {
           message.error(errMsg)
         }
       } finally {
+        streamPendingRef.current = false
         clearStreamFlushTimer()
         streamAbortRef.current = null
         streamTextBufferRef.current = ''
@@ -493,27 +656,42 @@ function ChatPage() {
       }
     },
     [
-      activeConversationId,
       applyStreamBuffersToMessage,
       clearStreamFlushTimer,
-      deepThinking,
       conversations,
       ensureConversation,
       loading,
       maybeGenerateConversationTitle,
+      pendingFiles,
+      replyStyle,
+      modelId,
       scheduleStreamFlush,
       scrollToBottom,
+      syncMessagesAfterStream,
     ],
   )
 
-  const handleRetryQuestion = useCallback(async (retryPrompt) => {
-    const nextPrompt = String(retryPrompt || '').trim()
-    if (!nextPrompt) {
-      message.warning('未找到对应问题，无法重新回答')
-      return
-    }
-    await submitQuestion(nextPrompt)
-  }, [submitQuestion])
+  const handleRetryQuestion = useCallback(
+    async (retryPrompt) => {
+      const nextPrompt = String(retryPrompt || '').trim()
+      if (!nextPrompt) {
+        message.warning('未找到对应问题，无法重新回答')
+        return
+      }
+      setChatList((prev) => {
+        const next = [...prev]
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i].type === 'bot') {
+            next.splice(i, 1)
+            break
+          }
+        }
+        return next
+      })
+      await submitQuestion(nextPrompt)
+    },
+    [submitQuestion],
+  )
 
   const actionItems = useCallback(
     () => [
@@ -610,7 +788,7 @@ function ChatPage() {
         message.warning('分享链接已创建，请手动复制')
       }
     } catch (e) {
-      message.error(e?.response?.data?.message || '创建分享链接失败')
+      message.error(getApiErrorMessage(e, '创建分享链接失败'))
     } finally {
       setShareCreating(false)
     }
@@ -675,19 +853,40 @@ function ChatPage() {
                 }
               }
               if (actionKey === 'retry') {
-                handleRetryQuestion(data.retryPrompt)
+                const aiKey = String(data?.key || '')
+                const aiIndex = chatList.findIndex((msg) => msg.id === aiKey)
+                let retryPrompt = ''
+                for (let i = aiIndex - 1; i >= 0; i -= 1) {
+                  if (chatList[i]?.type === 'user') {
+                    retryPrompt = chatList[i].message
+                    break
+                  }
+                }
+                handleRetryQuestion(retryPrompt)
               }
             }}
           />
         )),
       }),
-      user: {
+      user: (data) => ({
         placement: 'end',
         avatar: () => <Avatar className="chat-main-avatar">我</Avatar>,
         typing: false,
-      },
+        contentRender: (content) => {
+          const msgKey = String(data?.key || '')
+          const msg = chatList.find((item) => item.id === msgKey)
+          const attachments = msg?.attachments || []
+          const text = String(content || '').trim()
+          return (
+            <div className="chat-user-content-wrap">
+              <ChatMessageAttachments files={attachments} />
+              {text ? <div className="chat-user-text">{text}</div> : null}
+            </div>
+          )
+        },
+      }),
     }),
-    [actionItems, copyTextSafely, handleRetryQuestion, reasoningExpandedMap, renderMarkdownWithCodeHighlighter, shareMode, toggleReasoningExpanded],
+    [actionItems, copyTextSafely, handleRetryQuestion, reasoningExpandedMap, renderMarkdownWithCodeHighlighter, shareMode, toggleReasoningExpanded, chatList],
   )
 
   useEffect(() => {
@@ -715,14 +914,16 @@ function ChatPage() {
   }, [])
 
   useEffect(() => {
+    activeConversationIdRef.current = activeConversationId
+  }, [activeConversationId])
+
+  useEffect(() => {
     if (!activeConversationId) return
     setShareMode(false)
     setSelectedShareGroupIds([])
     setShareModalOpen(false)
     setReasoningExpandedMap({})
-    loadConversationMessages(activeConversationId).catch((e) => {
-      message.error(e?.response?.data?.message || '加载会话失败')
-    })
+    loadConversationMessages(activeConversationId).catch(() => {})
   }, [activeConversationId, loadConversationMessages])
 
   useEffect(() => {
@@ -740,6 +941,165 @@ function ChatPage() {
     }
   }, [clearStreamFlushTimer])
 
+  const showEmptyLayout = !shareMode && chatList.length === 0
+  const [composerMorphing, setComposerMorphing] = useState(false)
+  const [emptyHeroVisible, setEmptyHeroVisible] = useState(() => !shareMode && chatList.length === 0)
+  const [emptyHeroTyped, setEmptyHeroTyped] = useState('')
+  const showEmptyLayoutRef = useRef(showEmptyLayout)
+  const emptyTypewriterCancelRef = useRef(null)
+
+  const clearEmptyTypewriter = useCallback(() => {
+    emptyTypewriterCancelRef.current?.()
+    emptyTypewriterCancelRef.current = null
+  }, [])
+
+  const startEmptyHeroTypewriter = useCallback(() => {
+    clearEmptyTypewriter()
+    setEmptyHeroTyped('')
+    emptyTypewriterCancelRef.current = runEmptyHeroTypewriter({
+      delayMs: COMPOSER_MORPH_MS,
+      onUpdate: setEmptyHeroTyped,
+    })
+  }, [clearEmptyTypewriter])
+
+  useEffect(() => {
+    if (showEmptyLayout) {
+      setEmptyHeroVisible(true)
+    }
+  }, [showEmptyLayout])
+
+  useEffect(() => {
+    if (showEmptyLayoutRef.current === showEmptyLayout) return
+    showEmptyLayoutRef.current = showEmptyLayout
+    setComposerMorphing(true)
+    const morphTimer = window.setTimeout(() => setComposerMorphing(false), COMPOSER_MORPH_MS)
+    let heroTimer
+    if (!showEmptyLayout) {
+      heroTimer = window.setTimeout(() => setEmptyHeroVisible(false), COMPOSER_MORPH_MS - 80)
+    }
+    return () => {
+      window.clearTimeout(morphTimer)
+      if (heroTimer) window.clearTimeout(heroTimer)
+    }
+  }, [showEmptyLayout])
+
+  useEffect(() => {
+    if (!showEmptyLayout || !emptyHeroVisible) {
+      clearEmptyTypewriter()
+      setEmptyHeroTyped('')
+      return undefined
+    }
+    const prefersReducedMotion =
+      typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (prefersReducedMotion) {
+      clearEmptyTypewriter()
+      setEmptyHeroTyped('')
+      const revealTimer = window.setTimeout(() => setEmptyHeroTyped(EMPTY_HERO_TEXT), COMPOSER_MORPH_MS)
+      return () => window.clearTimeout(revealTimer)
+    }
+    startEmptyHeroTypewriter()
+    return clearEmptyTypewriter
+  }, [
+    showEmptyLayout,
+    emptyHeroVisible,
+    activeConversationId,
+    startEmptyHeroTypewriter,
+    clearEmptyTypewriter,
+  ])
+
+  const chatComposer = (
+    <div className={`chat-main-composer ${stylePanelOpen ? 'is-style-open' : ''}`}>
+      <div className='chat-main-sender-wrap'>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={getUploadAcceptByModel(modelId)}
+          style={{ display: 'none' }}
+          onChange={handleFileChange}
+        />
+        {pendingFiles.length ? (
+          <div className='chat-main-attachments'>
+            {pendingFiles.map((item) => (
+              <div key={item.fileId} className='chat-main-attachment-item'>
+                <PaperClipOutlined />
+                <span className='chat-main-attachment-name' title={item.originalName}>
+                  {item.originalName}
+                </span>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CloseOutlined />}
+                  aria-label="移除附件"
+                  onClick={() => handleRemovePendingFile(item.fileId)}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <Sender
+          loading={loading}
+          value={value}
+          placeholder="请输入你的问题，按 Enter 发送"
+          onChange={(v) => {
+            setValue(v)
+          }}
+          onSubmit={async (message) => {
+            await submitQuestion(message, { clearInput: true })
+          }}
+          onCancel={handleStopSending}
+          autoSize={{ minRows: 3, maxRows: 6 }}
+        />
+        <div className='chat-main-tools-inside'>
+          <div className='chat-main-tools-left'>
+            <button
+              type="button"
+              className='chat-main-attach-btn'
+              disabled={loading || uploadingFile || pendingFiles.length >= MAX_CHAT_UPLOAD_FILE_COUNT}
+              aria-label={getUploadHintByModel(modelId)}
+              title={getUploadHintByModel(modelId)}
+              onClick={handlePickFile}
+            >
+              {uploadingFile ? (
+                <span className='chat-main-attach-btn-loading' />
+              ) : (
+                <PaperClipOutlined />
+              )}
+            </button>
+          </div>
+          <div className='chat-main-tools-right'>
+            <ReplyStyleNeonTrigger
+              value={replyStyle}
+              open={stylePanelOpen}
+              disabled={loading}
+              onOpenChange={setStylePanelOpen}
+            />
+            <Button
+              size="small"
+              type={loading ? 'default' : 'primary'}
+              className={`chat-main-send-action ${loading ? 'is-stop' : 'is-send'}`}
+              icon={loading ? <PauseOutlined /> : <SendOutlined />}
+              aria-label={loading ? '停止' : '发送'}
+              onClick={async () => {
+                if (loading) {
+                  handleStopSending()
+                  return
+                }
+                await submitQuestion(value, { clearInput: true })
+              }}
+            />
+          </div>
+        </div>
+      </div>
+      <ReplyStylePanel
+        value={replyStyle}
+        open={stylePanelOpen}
+        disabled={loading}
+        onOpenChange={setStylePanelOpen}
+        onChange={handleReplyStyleChange}
+      />
+    </div>
+  )
+
   return (
     <ConfigProvider theme={antdThemeConfig}>
       <Layout style={{ height: '100%' }}>
@@ -750,7 +1110,7 @@ function ChatPage() {
           onClose={() => setMobileSideOpen(false)}
           title={null}
           closable={false}
-          width="82vw"
+          size="82vw"
           styles={{
             header: {
               display: 'none',
@@ -759,7 +1119,7 @@ function ChatPage() {
               padding: 0,
               backgroundColor: 'var(--app-sider-bg)',
             },
-            content: {
+            section: {
               backgroundColor: 'var(--app-sider-bg)',
             },
           }}
@@ -782,7 +1142,7 @@ function ChatPage() {
                 setActiveConversationId(conv.id)
                 setMobileSideOpen(false)
               } catch (e) {
-                message.error(e?.response?.data?.message || '新建对话失败')
+                message.error(getApiErrorMessage(e, '新建对话失败'))
               }
             }}
             onRename={async (id, title) => {
@@ -793,7 +1153,7 @@ function ChatPage() {
                 )
                 message.success('重命名成功')
               } catch (e) {
-                message.error(e?.response?.data?.message || '重命名失败')
+                message.error(getApiErrorMessage(e, '重命名失败'))
               }
             }}
             onTogglePin={async (id, isPinned) => {
@@ -804,7 +1164,7 @@ function ChatPage() {
                 )
                 message.success(isPinned ? '置顶成功' : '已取消置顶')
               } catch (e) {
-                message.error(e?.response?.data?.message || '置顶操作失败')
+                message.error(getApiErrorMessage(e, '置顶操作失败'))
               }
             }}
             onDelete={async (id) => {
@@ -823,7 +1183,7 @@ function ChatPage() {
                 })
                 message.success('删除成功')
               } catch (e) {
-                message.error(e?.response?.data?.message || '删除失败')
+                message.error(getApiErrorMessage(e, '删除失败'))
               }
             }}
             footerUser={{
@@ -866,7 +1226,7 @@ function ChatPage() {
                 setConversations((prev) => sortConversations([conv, ...prev]))
                 setActiveConversationId(conv.id)
               } catch (e) {
-                message.error(e?.response?.data?.message || '新建对话失败')
+                message.error(getApiErrorMessage(e, '新建对话失败'))
               }
             }}
             onRename={async (id, title) => {
@@ -877,7 +1237,7 @@ function ChatPage() {
                 )
                 message.success('重命名成功')
               } catch (e) {
-                message.error(e?.response?.data?.message || '重命名失败')
+                message.error(getApiErrorMessage(e, '重命名失败'))
               }
             }}
             onTogglePin={async (id, isPinned) => {
@@ -888,7 +1248,7 @@ function ChatPage() {
                 )
                 message.success(isPinned ? '置顶成功' : '已取消置顶')
               } catch (e) {
-                message.error(e?.response?.data?.message || '置顶操作失败')
+                message.error(getApiErrorMessage(e, '置顶操作失败'))
               }
             }}
             onDelete={async (id) => {
@@ -907,7 +1267,7 @@ function ChatPage() {
                 })
                 message.success('删除成功')
               } catch (e) {
-                message.error(e?.response?.data?.message || '删除失败')
+                message.error(getApiErrorMessage(e, '删除失败'))
               }
             }}
             footerUser={{
@@ -923,9 +1283,19 @@ function ChatPage() {
           />
         </Sider>
       )}
-      <Content style={{ backgroundColor: 'var(--app-content-bg)', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
-        <div className='chat-main'>
-          <div className='chat-main-header'>
+      <Content
+        style={{
+          backgroundColor: 'var(--app-content-bg)',
+          minWidth: 0,
+          minHeight: 0,
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        <div className={`chat-main ${showEmptyLayout ? 'is-empty' : ''} ${composerMorphing ? 'is-composer-morphing' : ''}`}>
+          <div className={`chat-main-header ${isMobile ? 'is-mobile' : ''}`}>
             {isMobile ? (
               <Button
                 className='chat-main-menu-btn'
@@ -934,6 +1304,9 @@ function ChatPage() {
                 onClick={() => setMobileSideOpen(true)}
               />
             ) : null}
+            <div className={`chat-main-model-select-wrap ${isMobile ? 'has-menu' : ''}`}>
+              <ChatModelSelect value={modelId} disabled={loading} onChange={handleChatModelChange} />
+            </div>
             <div className='chat-main-title'>{activeTitle}</div>
             {SHARE_FEATURE_VISIBLE ? (
               <div className='chat-main-share'>
@@ -952,107 +1325,83 @@ function ChatPage() {
               </div>
             ) : null}
           </div>
-          <div className='chat-main-content'>
-            {shareMode ? (
-              <div className='chat-main-share-select-list'>
-                {shareRows.map((row) => {
-                  const checked = selectedShareGroupIds.includes(row.groupId)
-                  return (
-                    <div
-                      key={row.id}
-                      className={`chat-main-share-select-row ${row.role === 'user' ? 'is-user' : 'is-assistant'}`}
-                    >
-                      <div className='chat-main-share-check-col'>
-                        <Checkbox
-                          checked={checked}
-                          onChange={(e) => toggleShareGroup(row.groupId, e.target.checked)}
-                        />
-                      </div>
-                      <div className='chat-main-share-bubble-col'>
+          <div className='chat-main-body'>
+            {showEmptyLayout ? <div className='chat-main-empty-spacer' aria-hidden='true' /> : null}
+            {!showEmptyLayout ? (
+              <div className='chat-main-content'>
+                {shareMode ? (
+                  <div className='chat-main-share-select-list'>
+                    {shareRows.map((row) => {
+                      const checked = selectedShareGroupIds.includes(row.groupId)
+                      return (
                         <div
-                          className={`chat-main-share-bubble ${row.role === 'user' ? 'is-user' : 'is-assistant'}`}
-                          onClick={() => toggleShareGroup(row.groupId, !checked)}
+                          key={row.id}
+                          className={`chat-main-share-select-row ${row.role === 'user' ? 'is-user' : 'is-assistant'}`}
                         >
-                          <Typography>{renderMarkdownWithCodeHighlighter(row.content)}</Typography>
+                          <div className='chat-main-share-check-col'>
+                            <Checkbox
+                              checked={checked}
+                              onChange={(e) => toggleShareGroup(row.groupId, e.target.checked)}
+                            />
+                          </div>
+                          <div className='chat-main-share-bubble-col'>
+                            <div
+                              className={`chat-main-share-bubble ${row.role === 'user' ? 'is-user' : 'is-assistant'}`}
+                              onClick={() => toggleShareGroup(row.groupId, !checked)}
+                            >
+                              <Typography>{renderMarkdownWithCodeHighlighter(row.content)}</Typography>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <Bubble.List
-                ref={listRef}
-                items={bubbleItems}
-                role={bubbleRoles}
-                style={{ height: '100%', scrollBehavior: 'smooth' }}
-              />
-            )}
-          </div>
-          <div className='chat-main-footer'>
-            {shareMode ? (
-              <div className='chat-main-share-footer'>
-                <div className='chat-main-share-footer-left'>
-                  <Button type="link" onClick={handleSelectAllShare}>
-                    {selectedShareCount === shareGroupIds.length && shareGroupIds.length > 0 ? '取消全选' : '全选'}
-                  </Button>
-                  <span>已选择{selectedShareCount}组对话</span>
-                </div>
-                <div className='chat-main-share-footer-right'>
-                  <Button onClick={exitShareMode}>取消</Button>
-                  <Button
-                    type="primary"
-                    disabled={!selectedShareCount}
-                    onClick={() => setShareModalOpen(true)}
-                  >
-                    创建分享链接
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className='chat-main-sender-wrap'>
-                <div className='chat-main-tools-inside'>
-                  <div className={`chat-main-thinking-card ${deepThinking ? 'is-active' : ''}`}>
-                    <div className='chat-main-thinking-texts'>
-                      <span className='chat-main-thinking-title'>深度思考</span>
-                    </div>
-                    <Switch
-                      className='chat-main-thinking-switch'
-                      size="small"
-                      checked={deepThinking}
-                      onChange={(checked) => setDeepThinking(checked)}
-                    />
+                      )
+                    })}
                   </div>
-                  <Button
-                    size="small"
-                    type={loading ? 'default' : 'primary'}
-                    className={`chat-main-send-action ${loading ? 'is-stop' : 'is-send'}`}
-                    icon={loading ? <PauseOutlined /> : <SendOutlined />}
-                    aria-label={loading ? '停止' : '发送'}
-                    onClick={async () => {
-                      if (loading) {
-                        handleStopSending()
-                        return
-                      }
-                      await submitQuestion(value, { clearInput: true })
-                    }}
+                ) : (
+                  <Bubble.List
+                    ref={listRef}
+                    items={bubbleItems}
+                    role={bubbleRoles}
+                    style={{ height: '100%', scrollBehavior: 'smooth' }}
                   />
-                </div>
-                <Sender
-                  loading={loading}
-                  value={value}
-                  placeholder="请输入你的问题，按 Enter 发送"
-                  onChange={(v) => {
-                    setValue(v)
-                  }}
-                  onSubmit={async () => {
-                    await submitQuestion(value, { clearInput: true })
-                  }}
-                  onCancel={handleStopSending}
-                  autoSize={{ minRows: 3, maxRows: 6 }}
-                />
+                )}
               </div>
-            )}
+            ) : null}
+            <div className={`chat-main-footer-shell ${showEmptyLayout ? 'is-elevated' : ''}`}>
+              {emptyHeroVisible ? (
+                <div className={`chat-main-empty-hero ${!showEmptyLayout ? 'is-leaving' : ''}`}>
+                  <h2 className='chat-main-empty-title' aria-label={EMPTY_HERO_TEXT}>
+                    {emptyHeroTyped}
+                    {emptyHeroTyped.length > 0 && emptyHeroTyped.length < EMPTY_HERO_TEXT.length ? (
+                      <span className='chat-main-empty-title-caret' aria-hidden='true' />
+                    ) : null}
+                  </h2>
+                </div>
+              ) : null}
+              <div className='chat-main-footer'>
+                {shareMode ? (
+                  <div className='chat-main-share-footer'>
+                    <div className='chat-main-share-footer-left'>
+                      <Button type="link" onClick={handleSelectAllShare}>
+                        {selectedShareCount === shareGroupIds.length && shareGroupIds.length > 0 ? '取消全选' : '全选'}
+                      </Button>
+                      <span>已选择{selectedShareCount}组对话</span>
+                    </div>
+                    <div className='chat-main-share-footer-right'>
+                      <Button onClick={exitShareMode}>取消</Button>
+                      <Button
+                        type="primary"
+                        disabled={!selectedShareCount}
+                        onClick={() => setShareModalOpen(true)}
+                      >
+                        创建分享链接
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  chatComposer
+                )}
+              </div>
+            </div>
           </div>
         </div>
         <Modal
@@ -1119,7 +1468,7 @@ function ChatPage() {
                   })
                   return true
                 } catch (e) {
-                  message.error(e?.response?.data?.message || '登录失败')
+                  message.error(getApiErrorMessage(e, '登录失败'))
                   return false
                 }
               }}
@@ -1132,7 +1481,7 @@ function ChatPage() {
                   await refreshMeAndConvs()
                   return true
                 } catch (e) {
-                  message.error(e?.response?.data?.message || '注册失败')
+                  message.error(getApiErrorMessage(e, '注册失败'))
                   return false
                 }
               }}

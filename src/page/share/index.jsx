@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { Spin, Empty, Typography, message, Button, Tag } from 'antd'
 import XMarkdown from '@ant-design/x-markdown'
 import { getShareDetail } from '@/api/share'
+import { getApiErrorMessage } from '@/utils/getApiErrorMessage'
 import logo from '@/assets/images/logo-256.png'
 import '@/style/share.scss'
 
@@ -20,7 +21,7 @@ export default function SharePage() {
         setDetail(res || null)
       })
       .catch((e) => {
-        message.error(e?.response?.data?.message || '分享内容加载失败')
+        message.error(getApiErrorMessage(e, '分享内容加载失败'))
         setDetail(null)
       })
       .finally(() => {

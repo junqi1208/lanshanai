@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { normalizeAxiosError } from '@/utils/getApiErrorMessage'
 import { clearToken, getToken } from './token'
 
 export const apiClient = axios.create({
@@ -47,14 +48,11 @@ apiClient.interceptors.response.use(
     return Promise.reject(businessError)
   },
   (err) => {
+    normalizeAxiosError(err)
     const status = err?.response?.status
     if (status === 401) {
       clearToken()
       window.dispatchEvent(new CustomEvent('auth:logout'))
-    }
-    // 添加 HTTP 状态码
-    if (err?.response?.status) {
-      err.code = err.response.status
     }
     return Promise.reject(err)
   },

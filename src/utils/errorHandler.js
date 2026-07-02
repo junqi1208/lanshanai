@@ -1,4 +1,5 @@
 import { message, notification } from 'antd';
+import { getApiErrorMessage } from './getApiErrorMessage';
 
 // 错误码映射
 const ERROR_CODE_MAP = {
@@ -51,18 +52,11 @@ export const handleError = (error, options = {}) => {
   } = options;
 
   // 获取错误信息
-  let errorCode = 500;
-  let errorMessage = DEFAULT_ERROR_MESSAGE;
+  let errorCode = error?.response?.data?.code ?? error?.code ?? 500;
+  let errorMessage = getApiErrorMessage(error, '');
 
-  // 从错误响应中获取错误码和信息
-  if (error?.response?.data) {
-    errorCode = error.response.data.code || 500;
-    errorMessage = error.response.data.message || ERROR_CODE_MAP[errorCode] || DEFAULT_ERROR_MESSAGE;
-  } else if (error?.code) {
-    errorCode = error.code;
+  if (!errorMessage) {
     errorMessage = ERROR_CODE_MAP[errorCode] || DEFAULT_ERROR_MESSAGE;
-  } else if (error?.message) {
-    errorMessage = error.message;
   }
 
   // 根据错误类型进行特殊处理

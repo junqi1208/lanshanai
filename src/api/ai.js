@@ -1,55 +1,53 @@
-import { apiClient } from './client'
-import { clearToken, getToken } from './token'
+import { apiClient } from "./client"
+import { getApiErrorMessage } from "@/utils/getApiErrorMessage"
+import { clearToken, getToken } from "./token"
 
-export async function ask({ conversationId, prompt, deepThinking }) {
-  const { data } = await apiClient.post('/api/ai/ask', { conversationId, prompt, deepThinking })
+export async function ask({ conversationId, prompt, deepThinking, fileIds, replyStyle, modelId }) {
+  const { data } = await apiClient.post("/api/ai/ask", {
+    conversationId,
+    prompt,
+    deepThinking,
+    fileIds,
+    replyStyle,
+    modelId,
+  })
   return data
 }
 
-// 使用错误处理包装的版本
-export const askWithErrorHandling = async ({ conversationId, prompt, deepThinking }, options = {}) => {
-  const { handleError } = await import('@/utils/errorHandler')
-  try {
-    const result = await ask({ conversationId, prompt, deepThinking })
-    return result
-  } catch (error) {
-    handleError(error, options)
-    throw error
-  }
-}
-
 export async function summarizeConversationTitle({ conversationId }) {
-  const { data } = await apiClient.post('/api/ai/summarize-title', { conversationId })
+  const { data } = await apiClient.post("/api/ai/summarize-title", { conversationId })
   return data
 }
 
 export async function askStream(
-  { conversationId, prompt, deepThinking },
+  { conversationId, prompt, deepThinking, fileIds, replyStyle, modelId },
   { onStart, onDelta, onReasoning, onDone, onError, signal } = {},
 ) {
   const token = getToken()
-  const resp = await fetch('/api/ai/ask/stream', {
-    method: 'POST',
+  const resp = await fetch("/api/ai/ask/stream", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ conversationId, prompt, deepThinking }),
+    body: JSON.stringify({ conversationId, prompt, deepThinking, fileIds, replyStyle, modelId }),
     signal,
   })
 
   if (!resp.ok || !resp.body) {
-    if (resp.status === 401) {
+    if (resp.status === 401 && typeof window !== "undefined") {
       clearToken()
-      window.dispatchEvent(new CustomEvent('auth:logout'))
+      window.dispatchEvent(new CustomEvent("auth:logout"))
     }
-    const txt = await resp.text().catch(() => '')
-    throw new Error(txt || `HTTP ${resp.status}`)
+    const txt = await resp.text().catch(() => "")
+    throw new Error(getApiErrorMessage(txt, `请求失败（${resp.status}）`))
   }
 
   const reader = resp.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
+  const decoder = new TextDecoder("utf-8")
+  let buffer = ""
+  let streamError = null
+  let gotDone = false
 
   const handleEventChunk = (chunkText) => {
     const lines = chunkText
@@ -57,7 +55,7 @@ export async function askStream(
       .map((line) => line.trim())
       .filter(Boolean)
 
-    const dataLines = lines.filter((line) => line.startsWith('data:'))
+    const dataLines = lines.filter((line) => line.startsWith("data:"))
     if (!dataLines.length) return
 
     for (const dataLine of dataLines) {
@@ -71,28 +69,45 @@ export async function askStream(
         continue
       }
 
-      if (payload?.type === 'start') onStart?.(payload)
-      if (payload?.type === 'delta') onDelta?.(payload.delta || '')
-      if (payload?.type === 'reasoning') onReasoning?.(payload.delta || '')
-      if (payload?.type === 'done') onDone?.(payload)
-      if (payload?.type === 'error') onError?.(payload.message || '流式请求失败')
+      if (payload?.type === "start") onStart?.(payload)
+      if (payload?.type === "delta") onDelta?.(payload.delta || "")
+      if (payload?.type === "reasoning") onReasoning?.(payload.delta || "")
+      if (payload?.type === "done") {
+        gotDone = true
+        onDone?.(payload)
+      }
+      if (payload?.type === "error") {
+        streamError = payload.message || "流式请求失败"
+        onError?.(streamError)
+      }
     }
   }
 
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const chunks = buffer.split(/\r?\n\r?\n/)
-    buffer = chunks.pop() || ''
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const chunks = buffer.split(/\r?\n\r?\n/)
+      buffer = chunks.pop() || ""
 
-    for (const chunk of chunks) {
-      handleEventChunk(chunk)
+      for (const chunk of chunks) {
+        handleEventChunk(chunk)
+      }
+    }
+
+    if (buffer.trim()) {
+      handleEventChunk(buffer)
+    }
+  } finally {
+    try {
+      await reader.cancel()
+    } catch {
+      // ignore cancel failure
     }
   }
 
-  if (buffer.trim()) {
-    handleEventChunk(buffer)
+  if (streamError && !gotDone) {
+    throw new Error(streamError)
   }
 }
-
