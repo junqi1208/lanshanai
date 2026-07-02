@@ -1,20 +1,22 @@
-import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, notification, Checkbox, Button, Modal, Drawer, Grid, Input } from 'antd'
+import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, Checkbox, Button, Modal, Drawer, Grid, Input } from 'antd'
 import { Actions, Bubble, CodeHighlighter, Sender } from '@ant-design/x'
 import XMarkdown from '@ant-design/x-markdown'
-import { RedoOutlined, CopyOutlined, SendOutlined, PauseOutlined, PaperClipOutlined, CloseOutlined } from '@ant-design/icons'
+import { RedoOutlined, CopyOutlined, SendOutlined, PauseOutlined, PaperClipOutlined } from '@ant-design/icons'
 import copy from 'copy-to-clipboard'
 import ChatSide from './side'
 import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 const { Content, Sider } = Layout
 import ChatMessageAttachments, { parseMessageAttachments } from '../../components/chatMessageAttachments'
 import { ReplyStyleNeonTrigger, ReplyStylePanel } from '../../components/replyStylePicker'
+import ComposerUploadPanel from '../../components/composerUploadPanel'
 import { getStoredReplyStyle, storeReplyStyle } from '@/constants/replyStyles'
 import ChatModelSelect from '../../components/chatModelSelect'
 import {
   getChatModelMeta,
   getStoredChatModel,
-  getUploadAcceptByModel,
   getUploadHintByModel,
+  getUploadAcceptByModel,
   isImageAttachment,
   storeChatModel,
   MAX_CHAT_UPLOAD_FILE_SIZE,
@@ -23,12 +25,11 @@ import {
 import SvgIcon from '../../components/svgIcon'
 import useThemeMode from '@/hooks/useThemeMode'
 import '@/style/chat.scss'
-import { clearToken, getToken, setToken } from '@/api/token'
-import { login, me, register, updateMe } from '@/api/auth'
+import { clearToken, getToken } from '@/api/token'
+import { me, updateMe } from '@/api/auth'
 import { askStream, summarizeConversationTitle } from '@/api/ai'
 import { deleteFile, uploadFile } from '@/api/files'
 import { createShareLink } from '@/api/share'
-import BotAvatar from '@/assets/images/bot-256.png'
 import {
   createConversation,
   deleteConversation,
@@ -45,7 +46,6 @@ import { getApiErrorMessage } from '@/utils/getApiErrorMessage'
 const CONVERSATION_PAGE_SIZE = 20
 const SHARE_FEATURE_VISIBLE = true
 const COMPOSER_MORPH_MS = 580
-const LoginModal = lazy(() => import('../../components/loginModal'))
 const SettingModal = lazy(() => import('../../components/settingModal'))
 
 const sortConversations = (list = []) =>
@@ -87,12 +87,14 @@ function ChatPage() {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileSideOpen, setMobileSideOpen] = useState(false)
   const [value, setValue] = useState('')
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
   const [replyStyle, setReplyStyle] = useState(() => getStoredReplyStyle())
   const [modelId, setModelId] = useState(() => getStoredChatModel())
-  const [stylePanelOpen, setStylePanelOpen] = useState(false)
+  const [composerPanel, setComposerPanel] = useState(null)
+  const [stylePanelMounted, setStylePanelMounted] = useState(false)
+  const [uploadPanelMounted, setUploadPanelMounted] = useState(false)
   const [reasoningExpandedMap, setReasoningExpandedMap] = useState({})
-  const [loginOpen, setLoginOpen] = useState(() => !getToken())
   const [settingOpen, setSettingOpen] = useState(false)
   const { themeMode, resolvedTheme, applyThemeMode } = useThemeMode()
   const [currentUser, setCurrentUser] = useState(null)
@@ -112,7 +114,14 @@ function ChatPage() {
   const [shareAutoCopied, setShareAutoCopied] = useState(false)
   const [pendingFiles, setPendingFiles] = useState([])
   const [uploadingFile, setUploadingFile] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadingFileName, setUploadingFileName] = useState('')
   const fileInputRef = useRef(null)
+  const pendingFilesRef = useRef([])
+
+  useEffect(() => {
+    pendingFilesRef.current = pendingFiles
+  }, [pendingFiles])
 
   const renderMarkdownWithCodeHighlighter = useCallback((content) => {
     const source = String(content || '')
@@ -156,26 +165,24 @@ function ChatPage() {
     return <div className="chat-markdown-content">{nodes}</div>
   }, [])
 
-  const triggerEle = (
-    <SvgIcon
-      name={'collapse'}
-      style={{
-        transition: 'transform 0.6s',
-        transform: `rotate(${collapsed ? 0 : 180}deg)`,
-      }}
-    />
-  )
+  const handleCreateNew = useCallback(async ({ closeMobileDrawer = false } = {}) => {
+    try {
+      const conv = await createConversation({})
+      setConversations((prev) => sortConversations([conv, ...prev]))
+      setActiveConversationId(conv.id)
+      if (closeMobileDrawer) {
+        setMobileSideOpen(false)
+      }
+    } catch (e) {
+      message.error(getApiErrorMessage(e, '新建对话失败'))
+    }
+  }, [])
 
   useEffect(() => {
     if (!isMobile) {
       setMobileSideOpen(false)
     }
   }, [isMobile])
-
-  const activeTitle = useMemo(() => {
-    const found = conversations.find((c) => c.id === activeConversationId)
-    return found?.title || '新对话'
-  }, [activeConversationId, conversations])
 
   const sideItems = useMemo(() => {
     const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
@@ -460,63 +467,126 @@ function ChatPage() {
     message.info('已暂停回答')
   }, [pauseCurrentStreamingAnswer])
 
-  const handlePickFile = useCallback(() => {
+  const toggleComposerPanel = useCallback((panel) => {
+    setComposerPanel((prev) => (prev === panel ? null : panel))
+  }, [])
+
+  const handleOpenUploadPanel = useCallback(() => {
     if (!getToken()) {
-      setLoginOpen(true)
+      navigate('/login')
       return
     }
-    if (pendingFiles.length >= MAX_CHAT_UPLOAD_FILE_COUNT) {
+    toggleComposerPanel('upload')
+  }, [navigate, toggleComposerPanel])
+
+  const handlePickFiles = useCallback(() => {
+    if (pendingFilesRef.current.length >= MAX_CHAT_UPLOAD_FILE_COUNT) {
       message.warning(`最多只能上传 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个文件`)
       return
     }
     fileInputRef.current?.click()
-  }, [pendingFiles.length])
+  }, [])
 
-  const handleFileChange = useCallback(async (event) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
+  const uploadChatFile = useCallback(async (file, { expectImage = null } = {}) => {
+    if (!file) return false
 
     const lowerName = file.name.toLowerCase()
     const isDoc = lowerName.endsWith('.pdf') || lowerName.endsWith('.docx')
     const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif)$/.test(lowerName)
     const modelMeta = getChatModelMeta(modelId)
 
-    if (!isDoc && !(modelMeta.supportsImage && isImage)) {
+    if (expectImage === true) {
+      if (!modelMeta.supportsImage || !isImage) {
+        message.warning('请选择常见图片格式')
+        return false
+      }
+    } else if (expectImage === false) {
+      if (!isDoc) {
+        message.warning('请选择 PDF 或 Word（.docx）文件')
+        return false
+      }
+    } else if (!isDoc && !(modelMeta.supportsImage && isImage)) {
       message.warning(modelMeta.supportsImage ? '仅支持 PDF、Word 或常见图片格式' : '当前模型仅支持 PDF 与 Word（.docx）')
-      return
+      return false
     }
-    if (pendingFiles.length >= MAX_CHAT_UPLOAD_FILE_COUNT) {
+
+    if (pendingFilesRef.current.length >= MAX_CHAT_UPLOAD_FILE_COUNT) {
       message.warning(`最多只能上传 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个文件`)
-      return
+      return false
     }
     if (file.size > MAX_CHAT_UPLOAD_FILE_SIZE) {
       message.warning('文件大小不能超过 5MB')
+      return false
+    }
+
+    setComposerPanel('upload')
+    setUploadingFile(true)
+    setUploadProgress(0)
+    setUploadingFileName(file.name)
+    try {
+      const uploaded = await uploadFile(file, setUploadProgress)
+      setPendingFiles((prev) => {
+        if (prev.length >= MAX_CHAT_UPLOAD_FILE_COUNT) return prev
+        const next = [
+          ...prev,
+          {
+            fileId: uploaded.fileId,
+            originalName: uploaded.originalName,
+            mimeType: uploaded.mimeType,
+            charCount: uploaded.charCount,
+          },
+        ]
+        pendingFilesRef.current = next
+        return next
+      })
+      message.success(`已上传：${uploaded.originalName}`)
+      return true
+    } catch (e) {
+      message.error(getApiErrorMessage(e, '文件上传失败'))
+      return false
+    } finally {
+      setUploadingFile(false)
+      setUploadProgress(0)
+      setUploadingFileName('')
+    }
+  }, [modelId])
+
+  const handleUploadFiles = useCallback(async (fileList) => {
+    const files = Array.from(fileList || []).filter((item) => item instanceof File)
+    if (!files.length) return
+
+    let remaining = MAX_CHAT_UPLOAD_FILE_COUNT - pendingFilesRef.current.length
+    if (remaining <= 0) {
+      message.warning(`最多只能上传 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个文件`)
       return
     }
 
-    setUploadingFile(true)
-    try {
-      const uploaded = await uploadFile(file)
-      setPendingFiles((prev) => [
-        ...prev,
-        {
-          fileId: uploaded.fileId,
-          originalName: uploaded.originalName,
-          mimeType: uploaded.mimeType,
-          charCount: uploaded.charCount,
-        },
-      ])
-      message.success(`已上传：${uploaded.originalName}`)
-    } catch (e) {
-      message.error(getApiErrorMessage(e, '文件上传失败'))
-    } finally {
-      setUploadingFile(false)
+    for (const file of files) {
+      if (remaining <= 0) {
+        message.warning(`最多只能上传 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个文件`)
+        break
+      }
+      const success = await uploadChatFile(file, { expectImage: null })
+      if (success) {
+        remaining -= 1
+      }
     }
-  }, [modelId, pendingFiles.length])
+  }, [uploadChatFile])
+
+  const handleFileInputChange = useCallback(async (event) => {
+    const files = event.target.files
+    event.target.value = ''
+    if (files?.length) {
+      await handleUploadFiles(files)
+    }
+  }, [handleUploadFiles])
 
   const handleRemovePendingFile = useCallback(async (fileId) => {
-    setPendingFiles((prev) => prev.filter((item) => item.fileId !== fileId))
+    setPendingFiles((prev) => {
+      const next = prev.filter((item) => item.fileId !== fileId)
+      pendingFilesRef.current = next
+      return next
+    })
     try {
       await deleteFile(fileId)
     } catch {
@@ -550,7 +620,7 @@ function ChatPage() {
       const trimmed = String(rawPrompt || '').trim()
       if (!trimmed) return
       if (!getToken()) {
-        setLoginOpen(true)
+        navigate('/login')
         return
       }
       if (loading) {
@@ -566,6 +636,7 @@ function ChatPage() {
       }))
 
       setPendingFiles([])
+      pendingFilesRef.current = []
       if (fileInputRef.current) fileInputRef.current.value = ''
 
       setLoading(true)
@@ -662,6 +733,7 @@ function ChatPage() {
       ensureConversation,
       loading,
       maybeGenerateConversationTitle,
+      navigate,
       pendingFiles,
       replyStyle,
       modelId,
@@ -807,7 +879,7 @@ function ChatPage() {
     () => ({
       ai: (data) => ({
         placement: 'start',
-        avatar: () => <Avatar className="chat-main-avatar" src={BotAvatar} />,
+        avatar: false,
         typing: data.typing || false,
         contentRender: (content) => {
           const hasReasoning = !!String(data.reasoning || '').trim()
@@ -898,20 +970,20 @@ function ChatPage() {
       setConversationLoadingMore(false)
       setActiveConversationId('')
       setChatList([])
-      setLoginOpen(true)
+      navigate('/login', { replace: true, state: { fromLogout: true } })
     }
     window.addEventListener('auth:logout', handler)
     return () => window.removeEventListener('auth:logout', handler)
-  }, [])
+  }, [navigate])
 
   useEffect(() => {
     if (!getToken()) {
-      setLoginOpen(true)
+      navigate('/login', { replace: true })
       return
     }
     refreshMeAndConvs().catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [navigate])
 
   useEffect(() => {
     activeConversationIdRef.current = activeConversationId
@@ -1007,35 +1079,19 @@ function ChatPage() {
     clearEmptyTypewriter,
   ])
 
+  const composerPanelOpen = composerPanel !== null || stylePanelMounted || uploadPanelMounted
+
   const chatComposer = (
-    <div className={`chat-main-composer ${stylePanelOpen ? 'is-style-open' : ''}`}>
+    <div className={`chat-main-composer ${composerPanelOpen ? 'is-panel-open' : ''}`}>
       <div className='chat-main-sender-wrap'>
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           accept={getUploadAcceptByModel(modelId)}
           style={{ display: 'none' }}
-          onChange={handleFileChange}
+          onChange={handleFileInputChange}
         />
-        {pendingFiles.length ? (
-          <div className='chat-main-attachments'>
-            {pendingFiles.map((item) => (
-              <div key={item.fileId} className='chat-main-attachment-item'>
-                <PaperClipOutlined />
-                <span className='chat-main-attachment-name' title={item.originalName}>
-                  {item.originalName}
-                </span>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CloseOutlined />}
-                  aria-label="移除附件"
-                  onClick={() => handleRemovePendingFile(item.fileId)}
-                />
-              </div>
-            ))}
-          </div>
-        ) : null}
         <Sender
           loading={loading}
           value={value}
@@ -1047,31 +1103,27 @@ function ChatPage() {
             await submitQuestion(message, { clearInput: true })
           }}
           onCancel={handleStopSending}
-          autoSize={{ minRows: 3, maxRows: 6 }}
+          autoSize={{ minRows: 2, maxRows: 4 }}
         />
         <div className='chat-main-tools-inside'>
           <div className='chat-main-tools-left'>
             <button
               type="button"
-              className='chat-main-attach-btn'
-              disabled={loading || uploadingFile || pendingFiles.length >= MAX_CHAT_UPLOAD_FILE_COUNT}
+              className={`chat-main-attach-btn ${composerPanel === 'upload' ? 'is-open' : ''} ${pendingFiles.length ? 'has-files' : ''}`}
+              disabled={loading}
               aria-label={getUploadHintByModel(modelId)}
               title={getUploadHintByModel(modelId)}
-              onClick={handlePickFile}
+              onClick={handleOpenUploadPanel}
             >
-              {uploadingFile ? (
-                <span className='chat-main-attach-btn-loading' />
-              ) : (
-                <PaperClipOutlined />
-              )}
+              <PaperClipOutlined />
             </button>
           </div>
           <div className='chat-main-tools-right'>
             <ReplyStyleNeonTrigger
               value={replyStyle}
-              open={stylePanelOpen}
+              open={composerPanel === 'style'}
               disabled={loading}
-              onOpenChange={setStylePanelOpen}
+              onOpenChange={() => toggleComposerPanel('style')}
             />
             <Button
               size="small"
@@ -1092,10 +1144,25 @@ function ChatPage() {
       </div>
       <ReplyStylePanel
         value={replyStyle}
-        open={stylePanelOpen}
+        open={composerPanel === 'style'}
         disabled={loading}
-        onOpenChange={setStylePanelOpen}
+        onOpenChange={(open) => setComposerPanel(open ? 'style' : null)}
+        onMountChange={setStylePanelMounted}
         onChange={handleReplyStyleChange}
+      />
+      <ComposerUploadPanel
+        open={composerPanel === 'upload'}
+        onClose={() => setComposerPanel(null)}
+        onMountChange={setUploadPanelMounted}
+        modelId={modelId}
+        disabled={loading}
+        pendingFiles={pendingFiles}
+        uploading={uploadingFile}
+        uploadProgress={uploadProgress}
+        uploadingFileName={uploadingFileName}
+        onPickFiles={handlePickFiles}
+        onUploadFiles={handleUploadFiles}
+        onRemoveFile={handleRemovePendingFile}
       />
     </div>
   )
@@ -1135,16 +1202,7 @@ function ChatPage() {
               setActiveConversationId(id)
               setMobileSideOpen(false)
             }}
-            onCreateNew={async () => {
-              try {
-                const conv = await createConversation({})
-                setConversations((prev) => sortConversations([conv, ...prev]))
-                setActiveConversationId(conv.id)
-                setMobileSideOpen(false)
-              } catch (e) {
-                message.error(getApiErrorMessage(e, '新建对话失败'))
-              }
-            }}
+            onCreateNew={() => handleCreateNew({ closeMobileDrawer: true })}
             onRename={async (id, title) => {
               try {
                 const updated = await updateConversation(id, { title })
@@ -1203,15 +1261,14 @@ function ChatPage() {
           width={280}
           style={{ height: '100%', backgroundColor: 'var(--app-sider-bg)' }}
           collapsible
-          trigger={triggerEle}
+          trigger={null}
           collapsed={collapsed}
           collapsedWidth={0}
-          onCollapse={() => {
-            setCollapsed(!collapsed)
-          }}
+          onCollapse={setCollapsed}
         >
           <ChatSide
             collapsed={collapsed}
+            onToggleCollapse={() => setCollapsed(true)}
             items={sideItems}
             hasMore={conversationHasMore}
             loadingMore={conversationLoadingMore}
@@ -1220,15 +1277,7 @@ function ChatPage() {
             onSelect={async (id) => {
               setActiveConversationId(id)
             }}
-            onCreateNew={async () => {
-              try {
-                const conv = await createConversation({})
-                setConversations((prev) => sortConversations([conv, ...prev]))
-                setActiveConversationId(conv.id)
-              } catch (e) {
-                message.error(getApiErrorMessage(e, '新建对话失败'))
-              }
-            }}
+            onCreateNew={handleCreateNew}
             onRename={async (id, title) => {
               try {
                 const updated = await updateConversation(id, { title })
@@ -1295,19 +1344,40 @@ function ChatPage() {
         }}
       >
         <div className={`chat-main ${showEmptyLayout ? 'is-empty' : ''} ${composerMorphing ? 'is-composer-morphing' : ''}`}>
-          <div className={`chat-main-header ${isMobile ? 'is-mobile' : ''}`}>
-            {isMobile ? (
-              <Button
-                className='chat-main-menu-btn'
-                type="text"
-                icon={<SvgIcon name={'collapse'} size={18} />}
-                onClick={() => setMobileSideOpen(true)}
-              />
-            ) : null}
-            <div className={`chat-main-model-select-wrap ${isMobile ? 'has-menu' : ''}`}>
-              <ChatModelSelect value={modelId} disabled={loading} onChange={handleChatModelChange} />
+          <div className={`chat-main-header ${isMobile ? 'is-mobile' : ''} ${!isMobile && collapsed ? 'is-sider-collapsed' : ''}`}>
+            <div className='chat-main-header-left'>
+              {isMobile ? (
+                <Button
+                  className='chat-main-menu-btn'
+                  type="text"
+                  icon={<SvgIcon name={'collapse'} size={18} />}
+                  onClick={() => setMobileSideOpen(true)}
+                />
+              ) : null}
+              {!isMobile && collapsed ? (
+                <div className='chat-main-header-toolbar'>
+                  <Button
+                    type="text"
+                    className='chat-header-control chat-header-control--icon'
+                    icon={<SvgIcon name={'collapse'} size={18} />}
+                    aria-label="展开侧边栏"
+                    title="展开侧边栏"
+                    onClick={() => setCollapsed(false)}
+                  />
+                  <Button
+                    type="text"
+                    className='chat-header-control chat-header-control--icon'
+                    icon={<SvgIcon name="plus" size={18} />}
+                    aria-label="新建对话"
+                    title="新建对话"
+                    onClick={() => handleCreateNew()}
+                  />
+                </div>
+              ) : null}
+              <div className='chat-main-model-select-wrap'>
+                <ChatModelSelect value={modelId} disabled={loading} onChange={handleChatModelChange} />
+              </div>
             </div>
-            <div className='chat-main-title'>{activeTitle}</div>
             {SHARE_FEATURE_VISIBLE ? (
               <div className='chat-main-share'>
                 <Button
@@ -1446,48 +1516,6 @@ function ChatPage() {
             onFocus={(e) => e.target.select()}
           />
         </Modal>
-        {loginOpen ? (
-          <Suspense fallback={null}>
-            <LoginModal
-              open={loginOpen}
-              onCancel={() => {
-                if (!getToken()) return
-                setLoginOpen(false)
-              }}
-              onLogin={async (values) => {
-                try {
-                  const res = await login(values)
-                  if (!res?.accessToken) return false
-                  setToken(res.accessToken)
-                  setLoginOpen(false)
-                  await refreshMeAndConvs()
-                  notification.success({
-                    message: '欢迎回来',
-                    description: `很高兴再次见到你，${res?.user?.username || values?.username || ''}`,
-                    placement: 'topRight',
-                  })
-                  return true
-                } catch (e) {
-                  message.error(getApiErrorMessage(e, '登录失败'))
-                  return false
-                }
-              }}
-              onRegister={async (values) => {
-                try {
-                  const res = await register(values)
-                  if (!res?.accessToken) return false
-                  setToken(res.accessToken)
-                  setLoginOpen(false)
-                  await refreshMeAndConvs()
-                  return true
-                } catch (e) {
-                  message.error(getApiErrorMessage(e, '注册失败'))
-                  return false
-                }
-              }}
-            />
-          </Suspense>
-        ) : null}
         {settingOpen ? (
           <Suspense fallback={null}>
             <SettingModal

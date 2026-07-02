@@ -11,7 +11,7 @@ import {
   LogoutOutlined,
   MoreOutlined,
 } from '@ant-design/icons'
-import logo from '@/assets/images/logo-256.png'
+import SvgIcon from '@/components/svgIcon'
 import '@/style/side.scss'
 
 export default function ChatSide(props) {
@@ -29,6 +29,7 @@ export default function ChatSide(props) {
     onDelete,
     onOpenSettings,
     onLogout,
+    onToggleCollapse,
     footerUser,
   } = props
   const [searchMode, setSearchMode] = useState(false)
@@ -163,11 +164,21 @@ export default function ChatSide(props) {
     <div className='chat-side'>
       <div className="chat-side-header">
         <div className="chat-side-header-title">
-          <img src={logo} alt="logo" loading="eager" decoding="async" fetchPriority="high" />
-          { 
-            collapsed ? null : <span>览山Ai</span>
-          }
-        </div> 
+          {collapsed ? null : (
+            <span className="chat-side-brand" aria-label="览山">览山</span>
+          )}
+        </div>
+        {onToggleCollapse ? (
+          <button
+            type="button"
+            className="chat-side-collapse-btn chat-header-control chat-header-control--icon"
+            aria-label="收起侧边栏"
+            title="收起侧边栏"
+            onClick={onToggleCollapse}
+          >
+            <SvgIcon name="collapse" size={18} style={{ transform: 'rotate(180deg)' }} />
+          </button>
+        ) : null}
       </div>
       <div className='chat-side-add'>
         {searchMode ? (

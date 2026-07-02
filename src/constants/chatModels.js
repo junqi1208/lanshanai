@@ -105,8 +105,14 @@ export function getUploadAcceptByModel(modelId) {
 export function getUploadHintByModel(modelId) {
   const meta = getChatModelMeta(modelId)
   const types = meta.supportsImage ? "PDF、Word 或图片" : "PDF 或 Word 文档"
-  return `上传${types}（单个不超过 5MB，最多 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个）`
+  return `支持${types}，单个不超过 5MB，最多 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个`
 }
+
+export const DOCUMENT_UPLOAD_ACCEPT =
+  ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+export const IMAGE_UPLOAD_ACCEPT =
+  "image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif"
 
 export function isImageAttachment(originalName = "", mimeType = "") {
   const lower = String(originalName).toLowerCase()

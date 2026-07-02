@@ -59,23 +59,16 @@ export default function ChatModelSelect({ value, onChange, disabled = false, cla
         onClick: handleSelect,
       }}
     >
-      <Tooltip
-        title={current.hint || current.desc}
-        placement="bottom"
-        mouseEnterDelay={0.3}
-        classNames={{ root: "chat-main-model-tooltip" }}
+      <button
+        type="button"
+        className={`chat-main-model-trigger chat-header-control ${open ? "is-open" : ""} ${className}`.trim()}
+        disabled={disabled}
+        aria-label="选择模型"
+        aria-expanded={open}
       >
-        <button
-          type="button"
-          className={`chat-main-model-trigger ${open ? "is-open" : ""} ${className}`.trim()}
-          disabled={disabled}
-          aria-label="选择模型"
-          aria-expanded={open}
-        >
-          <span className="chat-main-model-trigger-label">{current.label}</span>
-          <DownOutlined className="chat-main-model-trigger-icon" />
-        </button>
-      </Tooltip>
+        <span className="chat-main-model-trigger-label">{current.label}</span>
+        <DownOutlined className="chat-main-model-trigger-icon" />
+      </button>
     </Dropdown>
   )
 }

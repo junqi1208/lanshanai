@@ -1,0 +1,6 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <path
+    d="M448 128h128v768H448V128zM128 448h768v128H128V448z"
+    fill="currentColor"
+  />
+</svg>

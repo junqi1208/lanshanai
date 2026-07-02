@@ -1,0 +1,335 @@
+.login-page {
+  --login-accent: #3b82f6;
+  --login-accent-rgb: 59, 130, 246;
+  --login-input-bg: rgba(255, 255, 255, 0.92);
+  --login-input-text: #0f172a;
+  --login-input-border: rgba(15, 23, 42, 0.14);
+  --login-panel-text: #0f172a;
+  --login-glass-bg: rgba(255, 255, 255, 0.48);
+  --login-glass-border: rgba(255, 255, 255, 0.32);
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+}
+
+.login-page.is-dark {
+  --login-input-bg: rgba(30, 41, 59, 0.88);
+  --login-input-text: #f1f5f9;
+  --login-input-border: rgba(255, 255, 255, 0.16);
+  --login-panel-text: #f8fafc;
+  --login-glass-bg: rgba(15, 23, 42, 0.52);
+  --login-glass-border: rgba(255, 255, 255, 0.14);
+}
+
+.login-page-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: url('/beijing.JPG') center center / cover no-repeat;
+  transform: scale(1.02);
+}
+
+.login-page-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(
+      105deg,
+      rgba(8, 15, 30, 0.55) 0%,
+      rgba(8, 15, 30, 0.2) 45%,
+      rgba(8, 15, 30, 0.65) 100%
+    ),
+    linear-gradient(0deg, rgba(8, 15, 30, 0.45) 0%, transparent 40%);
+  pointer-events: none;
+}
+
+.login-page-main {
+  position: relative;
+  z-index: 2;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 8vw;
+}
+
+.login-page-card {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  border-radius: 16px;
+  box-shadow: 0 20px 50px rgba(8, 15, 30, 0.22);
+  transform-origin: center center;
+  will-change: transform, opacity, filter;
+}
+
+.login-page-card.is-enter {
+  animation: login-card-enter 0.56s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.login-page-card.is-exit {
+  animation: login-card-exit 0.52s cubic-bezier(0.4, 0, 0.2, 1) both;
+  pointer-events: none;
+}
+
+@keyframes login-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-52px) scale(0.86);
+    filter: blur(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes login-card-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-52px) scale(0.86);
+    filter: blur(10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-page-card.is-enter,
+  .login-page-card.is-exit {
+    animation: none;
+  }
+}
+
+.login-page.is-dark .login-page-card {
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+}
+
+.login-page-card-body {
+  position: relative;
+  z-index: 1;
+  padding: 32px 28px 28px;
+  border-radius: 16px;
+  border: 1px solid var(--login-glass-border);
+  background: var(--login-glass-bg);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  color: var(--login-panel-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.login-page.is-dark .login-page-card-body {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.login-page-title {
+  margin: 0 0 24px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-align: left;
+  color: var(--login-panel-text);
+  font-family: 'PingFang SC', 'Songti SC', serif;
+}
+
+.login-page-mode {
+  display: flex;
+  gap: 20px;
+  justify-content: flex-start;
+  margin-bottom: 24px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--login-panel-text) 10%, transparent);
+}
+
+.login-page-mode button {
+  position: relative;
+  border: 0;
+  background: transparent;
+  padding: 0 2px 10px;
+  font-size: 14px;
+  color: color-mix(in srgb, var(--login-panel-text) 45%, transparent);
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.login-page-mode button.is-active {
+  color: var(--login-accent);
+  font-weight: 600;
+}
+
+.login-page-mode button.is-active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--login-accent);
+}
+
+.login-page-form {
+  color-scheme: light;
+}
+
+.login-page.is-dark .login-page-form {
+  color-scheme: dark;
+}
+
+.login-page-form .ant-form-item {
+  margin-bottom: 14px;
+}
+
+.login-page-form .ant-input,
+.login-page-form .ant-input-affix-wrapper,
+.login-page-form .ant-input-password {
+  border-radius: 10px !important;
+  background: var(--login-input-bg) !important;
+  border-color: var(--login-input-border) !important;
+  color: var(--login-input-text) !important;
+}
+
+.login-page-form .ant-input-affix-wrapper > input.ant-input {
+  background: transparent !important;
+  color: var(--login-input-text) !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.login-page-form .ant-input::placeholder,
+.login-page-form .ant-input-affix-wrapper input::placeholder {
+  color: color-mix(
+    in srgb,
+    var(--login-input-text) 42%,
+    transparent
+  ) !important;
+}
+
+.login-page-form .ant-input:hover,
+.login-page-form .ant-input-affix-wrapper:hover {
+  border-color: rgba(var(--login-accent-rgb), 0.45) !important;
+}
+
+.login-page-form .ant-input:focus,
+.login-page-form .ant-input-focused,
+.login-page-form .ant-input-affix-wrapper-focused {
+  border-color: var(--login-accent) !important;
+  box-shadow: 0 0 0 2px rgba(var(--login-accent-rgb), 0.16) !important;
+  background: var(--login-input-bg) !important;
+}
+
+.login-page-form .ant-input-affix-wrapper-focused > input.ant-input {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  border-radius: 0 !important;
+}
+
+.login-page-form .ant-input-password .ant-input-suffix {
+  color: color-mix(in srgb, var(--login-input-text) 55%, transparent);
+}
+
+/* 覆盖浏览器密码框 / 自动填充白底 */
+.login-page-form input.ant-input:-webkit-autofill,
+.login-page-form input.ant-input:-webkit-autofill:hover,
+.login-page-form input.ant-input:-webkit-autofill:focus,
+.login-page-form input.ant-input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--login-input-text) !important;
+  caret-color: var(--login-input-text);
+  box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.92) inset !important;
+  -webkit-box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.92) inset !important;
+  transition: background-color 99999s ease-out 0s;
+}
+
+.login-page.is-dark .login-page-form input.ant-input:-webkit-autofill,
+.login-page.is-dark .login-page-form input.ant-input:-webkit-autofill:hover,
+.login-page.is-dark .login-page-form input.ant-input:-webkit-autofill:focus,
+.login-page.is-dark .login-page-form input.ant-input:-webkit-autofill:active {
+  box-shadow: 0 0 0 1000px rgba(30, 41, 59, 0.88) inset !important;
+  -webkit-box-shadow: 0 0 0 1000px rgba(30, 41, 59, 0.88) inset !important;
+}
+
+.login-page-form .ant-input-affix-wrapper:has(input:-webkit-autofill) {
+  background: var(--login-input-bg) !important;
+}
+
+.login-page-submit.ant-btn-primary {
+  margin-top: 6px;
+  height: 44px !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  border: none !important;
+  background: var(--login-accent) !important;
+  box-shadow: 0 8px 20px rgba(var(--login-accent-rgb), 0.32) !important;
+}
+
+.login-page-submit.ant-btn-primary:not(:disabled):hover {
+  background: #2563eb !important;
+  box-shadow: 0 10px 24px rgba(var(--login-accent-rgb), 0.38) !important;
+}
+
+.login-page-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  padding: 16px 20px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  pointer-events: none;
+}
+
+.login-page-about-link {
+  pointer-events: auto;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.82);
+  text-decoration: none;
+  text-shadow: 0 1px 4px rgba(8, 15, 30, 0.35);
+  transition: color 0.2s ease, opacity 0.2s ease;
+
+  &:hover {
+    color: #fff;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+
+@media (max-width: 768px) {
+  .login-page-main {
+    justify-content: center;
+    align-items: center;
+    padding: 24px 20px;
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+
+  .login-page-card {
+    max-width: 100%;
+  }
+
+  .login-page-card-body {
+    padding: 28px 22px 24px;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-page-overlay {
+    background: linear-gradient(
+      0deg,
+      rgba(8, 15, 30, 0.72) 0%,
+      rgba(8, 15, 30, 0.35) 50%,
+      rgba(8, 15, 30, 0.5) 100%
+    );
+  }
+}

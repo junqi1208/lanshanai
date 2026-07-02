@@ -14,25 +14,37 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   margin-bottom: 12px;
   .chat-side-header-title {
+    flex: 1;
+    min-width: 0;
     height: 40px;
     display: flex;
-    justify-content: center;
+    justify-content: flex-start;
     align-items: center;
-    img {
-      width: 40px;
-      height: 40px;
-      object-fit: contain;
-    }
-    span {
-      font-size: 20px;
-      font-weight: 600;
-      color: var(--app-text-primary);
-      margin-left: 4px;
-      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    }
   }
+  .chat-side-brand {
+    display: inline-block;
+    min-width: 0;
+    line-height: 1;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--app-text-primary);
+    font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    user-select: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+.chat-side-collapse-btn {
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.chat-side-collapse-btn:active {
+  transform: scale(0.96);
 }
 .chat-side-add {
   width: 100%;
