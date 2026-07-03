@@ -15,7 +15,7 @@ export function getFileTypeLabel(originalName = "", mimeType = "") {
   return "文档"
 }
 
-function getFileIcon(originalName = "", mimeType = "") {
+export function getFileIcon(originalName = "", mimeType = "") {
   const lower = String(originalName).toLowerCase()
   if (lower.endsWith(".pdf") || mimeType === "application/pdf") {
     return <FilePdfOutlined />
@@ -32,7 +32,7 @@ function getFileIcon(originalName = "", mimeType = "") {
   return <FileOutlined />
 }
 
-function getFileIconClass(originalName = "", mimeType = "") {
+export function getFileIconClass(originalName = "", mimeType = "") {
   const lower = String(originalName).toLowerCase()
   if (lower.endsWith(".pdf") || mimeType === "application/pdf") return "is-pdf"
   if (

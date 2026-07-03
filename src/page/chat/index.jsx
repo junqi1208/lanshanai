@@ -1,4 +1,4 @@
-import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, Checkbox, Button, Modal, Drawer, Grid, Input } from 'antd'
+import { Layout, Avatar, Typography, ConfigProvider, theme as antdTheme, message, Checkbox, Button, Modal, Drawer, Grid, Input, Badge } from 'antd'
 import { Actions, Bubble, CodeHighlighter, Sender } from '@ant-design/x'
 import XMarkdown from '@ant-design/x-markdown'
 import { RedoOutlined, CopyOutlined, SendOutlined, PauseOutlined, PaperClipOutlined } from '@ant-design/icons'
@@ -46,6 +46,7 @@ import { getApiErrorMessage } from '@/utils/getApiErrorMessage'
 const CONVERSATION_PAGE_SIZE = 20
 const SHARE_FEATURE_VISIBLE = true
 const COMPOSER_MORPH_MS = 580
+const CHAT_UPLOAD_INPUT_ID = 'chat-composer-upload-input'
 const SettingModal = lazy(() => import('../../components/settingModal'))
 
 const sortConversations = (list = []) =>
@@ -118,10 +119,21 @@ function ChatPage() {
   const [uploadingFileName, setUploadingFileName] = useState('')
   const fileInputRef = useRef(null)
   const pendingFilesRef = useRef([])
+  const blockPanelDismissRef = useRef(false)
 
   useEffect(() => {
     pendingFilesRef.current = pendingFiles
   }, [pendingFiles])
+
+  useEffect(() => {
+    const clearDismissBlock = () => {
+      window.setTimeout(() => {
+        blockPanelDismissRef.current = false
+      }, 100)
+    }
+    window.addEventListener('focus', clearDismissBlock)
+    return () => window.removeEventListener('focus', clearDismissBlock)
+  }, [])
 
   const renderMarkdownWithCodeHighlighter = useCallback((content) => {
     const source = String(content || '')
@@ -471,21 +483,48 @@ function ChatPage() {
     setComposerPanel((prev) => (prev === panel ? null : panel))
   }, [])
 
-  const handleOpenUploadPanel = useCallback(() => {
-    if (!getToken()) {
-      navigate('/login')
+  const handleUploadBlocked = useCallback(() => {
+    if (loading) {
+      message.warning('请等待当前回答完成')
       return
     }
-    toggleComposerPanel('upload')
-  }, [navigate, toggleComposerPanel])
+    if (uploadingFile) {
+      message.warning('文件正在上传，请稍候')
+      return
+    }
+    if (pendingFilesRef.current.length >= MAX_CHAT_UPLOAD_FILE_COUNT) {
+      message.warning(`最多只能上传 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个文件`)
+    }
+  }, [loading, uploadingFile])
 
   const handlePickFiles = useCallback(() => {
     if (pendingFilesRef.current.length >= MAX_CHAT_UPLOAD_FILE_COUNT) {
       message.warning(`最多只能上传 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个文件`)
       return
     }
+    if (loading) {
+      message.warning('请等待当前回答完成')
+      return
+    }
+    if (uploadingFile) {
+      message.warning('文件正在上传，请稍候')
+      return
+    }
+    blockPanelDismissRef.current = true
     fileInputRef.current?.click()
-  }, [])
+  }, [loading, uploadingFile])
+
+  const handleOpenUploadPanel = useCallback(() => {
+    if (!getToken()) {
+      navigate('/login')
+      return
+    }
+    if (composerPanel === 'upload') {
+      handlePickFiles()
+      return
+    }
+    setComposerPanel('upload')
+  }, [navigate, composerPanel, handlePickFiles])
 
   const uploadChatFile = useCallback(async (file, { expectImage = null } = {}) => {
     if (!file) return false
@@ -552,7 +591,8 @@ function ChatPage() {
   }, [modelId])
 
   const handleUploadFiles = useCallback(async (fileList) => {
-    const files = Array.from(fileList || []).filter((item) => item instanceof File)
+    const files = (Array.isArray(fileList) ? fileList : Array.from(fileList || []))
+      .filter((item) => item instanceof File)
     if (!files.length) return
 
     let remaining = MAX_CHAT_UPLOAD_FILE_COUNT - pendingFilesRef.current.length
@@ -561,6 +601,7 @@ function ChatPage() {
       return
     }
 
+    let uploadedAny = false
     for (const file of files) {
       if (remaining <= 0) {
         message.warning(`最多只能上传 ${MAX_CHAT_UPLOAD_FILE_COUNT} 个文件`)
@@ -568,16 +609,21 @@ function ChatPage() {
       }
       const success = await uploadChatFile(file, { expectImage: null })
       if (success) {
+        uploadedAny = true
         remaining -= 1
       }
+    }
+    if (uploadedAny) {
+      setComposerPanel(null)
     }
   }, [uploadChatFile])
 
   const handleFileInputChange = useCallback(async (event) => {
-    const files = event.target.files
+    blockPanelDismissRef.current = false
+    const selectedFiles = Array.from(event.target.files || [])
     event.target.value = ''
-    if (files?.length) {
-      await handleUploadFiles(files)
+    if (selectedFiles.length) {
+      await handleUploadFiles(selectedFiles)
     }
   }, [handleUploadFiles])
 
@@ -1083,13 +1129,14 @@ function ChatPage() {
 
   const chatComposer = (
     <div className={`chat-main-composer ${composerPanelOpen ? 'is-panel-open' : ''}`}>
-      <div className='chat-main-sender-wrap'>
+      <div className="chat-main-sender-wrap">
         <input
           ref={fileInputRef}
+          id={CHAT_UPLOAD_INPUT_ID}
           type="file"
           multiple
           accept={getUploadAcceptByModel(modelId)}
-          style={{ display: 'none' }}
+          className="chat-composer-file-input"
           onChange={handleFileInputChange}
         />
         <Sender
@@ -1107,16 +1154,24 @@ function ChatPage() {
         />
         <div className='chat-main-tools-inside'>
           <div className='chat-main-tools-left'>
-            <button
-              type="button"
-              className={`chat-main-attach-btn ${composerPanel === 'upload' ? 'is-open' : ''} ${pendingFiles.length ? 'has-files' : ''}`}
-              disabled={loading}
-              aria-label={getUploadHintByModel(modelId)}
-              title={getUploadHintByModel(modelId)}
-              onClick={handleOpenUploadPanel}
+            <Badge
+              count={pendingFiles.length}
+              size="small"
+              color="#2563eb"
+              offset={[-4, 4]}
+              className="chat-main-attach-badge"
+              title={pendingFiles.length ? `已选 ${pendingFiles.length} 个附件` : getUploadHintByModel(modelId)}
             >
-              <PaperClipOutlined />
-            </button>
+              <button
+                type="button"
+                className={`chat-main-attach-btn ${composerPanel === 'upload' ? 'is-open' : ''}`}
+                disabled={loading}
+                aria-label={getUploadHintByModel(modelId)}
+                onClick={handleOpenUploadPanel}
+              >
+                <PaperClipOutlined />
+              </button>
+            </Badge>
           </div>
           <div className='chat-main-tools-right'>
             <ReplyStyleNeonTrigger
@@ -1155,12 +1210,15 @@ function ChatPage() {
         onClose={() => setComposerPanel(null)}
         onMountChange={setUploadPanelMounted}
         modelId={modelId}
+        uploadInputId={CHAT_UPLOAD_INPUT_ID}
         disabled={loading}
+        pendingCount={pendingFiles.length}
         pendingFiles={pendingFiles}
         uploading={uploadingFile}
         uploadProgress={uploadProgress}
         uploadingFileName={uploadingFileName}
-        onPickFiles={handlePickFiles}
+        blockDismissRef={blockPanelDismissRef}
+        onUploadBlocked={handleUploadBlocked}
         onUploadFiles={handleUploadFiles}
         onRemoveFile={handleRemovePendingFile}
       />

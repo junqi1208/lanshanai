@@ -13,9 +13,10 @@ export default function ComposerBottomPanel({
   children,
   className = '',
   size = 'default',
+  blockDismissRef,
 }) {
   const { mounted, visible } = useComposerPanelAnimation(open)
-  const { panelRef } = useComposerPanelDismiss({ open: visible, onClose })
+  const { panelRef } = useComposerPanelDismiss({ open: visible, onClose, blockDismissRef })
 
   useEffect(() => {
     onMountChange?.(mounted)

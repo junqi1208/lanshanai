@@ -4,7 +4,6 @@ export async function uploadFile(file, onProgress) {
   const formData = new FormData()
   formData.append('file', file)
   const { data } = await apiClient.post('/api/files/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000,
     onUploadProgress: (event) => {
       if (!event.total) return
